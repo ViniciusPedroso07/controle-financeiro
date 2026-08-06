@@ -132,17 +132,21 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   // Subscrevê em tempo real
   useEffect(() => {
-    const subscription = supabase
-      .from('families')
-      .on('*', (payload) => {
-        if (payload.new && payload.new.code === familyCode && payload.new.data) {
-          setD(payload.new.data);
+    const channel = supabase
+      .channel(`family-${familyCode}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'families', filter: `code=eq.${familyCode}` },
+        (payload) => {
+          if (payload.new && payload.new.data) {
+            setD(payload.new.data);
+          }
         }
-      })
+      )
       .subscribe();
 
     return () => {
-      subscription.unsubscribe();
+      supabase.removeChannel(channel);
     };
   }, [familyCode]);
 
