@@ -1294,111 +1294,113 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 function TabelaItens({ itens, onNome, onDia, onValor, onDel }) {
   return (
     <>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 74px 120px 32px',
-        gap: '8px',
-        fontFamily: "'IBM Plex Mono', monospace",
-        fontSize: '9.5px',
-        letterSpacing: '0.1em',
-        textTransform: 'uppercase',
-        color: 'var(--soft)',
-        paddingBottom: '6px',
-        borderBottom: `1px solid rgba(18,33,28,.14)`,
-        marginBottom: '8px',
-      }}>
-        <span>Nome</span>
-        <span style={{ textAlign: 'right' }}>Dia</span>
-        <span style={{ textAlign: 'right' }}>Valor</span>
-        <span />
-      </div>
       {itens.map((item) => (
         <div key={item.id} style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 74px 120px 32px',
-          gap: '8px',
-          alignItems: 'center',
-          padding: '7px 0',
+          padding: '10px 0',
           borderBottom: `1px solid rgba(18,33,28,.08)`,
         }}>
           <input
             type="text"
             value={item.nome}
             onChange={(e) => onNome(item.id, e.target.value)}
-            placeholder="Nome"
+            placeholder="Nome (ex: Formatura Nalin)"
             style={{
+              display: 'block',
+              width: '100%',
               border: 0,
               background: 'transparent',
               fontFamily: 'Inter, sans-serif',
-              fontSize: '13.5px',
+              fontSize: '14.5px',
+              fontWeight: 600,
               color: 'var(--ink)',
-              padding: '6px 2px',
+              padding: '4px 2px',
               borderRadius: '6px',
-              width: '100%',
+              marginBottom: '6px',
             }}
             onFocus={(e) => e.target.style.background = 'rgba(255,255,255,.6)'}
             onBlur={(e) => e.target.style.background = 'transparent'}
           />
-          <select
-            value={item.dia}
-            onChange={(e) => onDia(item.id, e.target.value)}
-            style={{
-              border: `1px solid rgba(18,33,28,.16)`,
-              background: '#fff',
-              borderRadius: '8px',
-              padding: '8px 4px',
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}>
+            <span style={{
               fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: '12px',
+              fontSize: '9.5px',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
               color: 'var(--soft)',
-              width: '100%',
-            }}
-          >
-            {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
-          </select>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="0,00"
-            value={item.valor}
-            onChange={(e) => onValor(item.id, e.target.value)}
-            style={{
-              border: `1px solid rgba(18,33,28,.16)`,
-              background: '#fff',
-              borderRadius: '8px',
-              padding: '8px 9px',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontVariantNumeric: 'tabular-nums',
-              fontSize: '13px',
-              color: 'var(--ink)',
-              textAlign: 'right',
-              width: '100%',
-            }}
-          />
-          <button
-            onClick={() => onDel(item.id)}
-            style={{
-              border: `1px solid rgba(18,33,28,.16)`,
-              background: 'transparent',
-              borderRadius: '8px',
-              height: '32px',
-              cursor: 'pointer',
-              color: 'var(--soft)',
-              fontSize: '15px',
-              lineHeight: 1,
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.background = 'var(--rosePale)';
-              e.target.style.color = 'var(--rose)';
-              e.target.style.borderColor = 'var(--rosePale)';
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.background = 'transparent';
-              e.target.style.color = 'var(--soft)';
-              e.target.style.borderColor = 'rgba(18,33,28,.16)';
-            }}
-          >
-            ×
-          </button>
+              flex: 'none',
+            }}>
+              Dia
+            </span>
+            <select
+              value={item.dia}
+              onChange={(e) => onDia(item.id, e.target.value)}
+              style={{
+                border: `1px solid rgba(18,33,28,.16)`,
+                background: '#fff',
+                borderRadius: '8px',
+                padding: '8px 6px',
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: '12px',
+                color: 'var(--soft)',
+                width: '58px',
+                flex: 'none',
+              }}
+            >
+              {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+            </select>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="0,00"
+              value={item.valor}
+              onChange={(e) => onValor(item.id, e.target.value)}
+              style={{
+                border: `1px solid rgba(18,33,28,.16)`,
+                background: '#fff',
+                borderRadius: '8px',
+                padding: '8px 9px',
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontVariantNumeric: 'tabular-nums',
+                fontSize: '13px',
+                color: 'var(--ink)',
+                textAlign: 'right',
+                flex: '1 1 auto',
+                minWidth: 0,
+              }}
+            />
+            <button
+              onClick={() => onDel(item.id)}
+              aria-label={`Remover ${item.nome || 'linha'}`}
+              style={{
+                border: `1px solid rgba(18,33,28,.16)`,
+                background: 'transparent',
+                borderRadius: '8px',
+                width: '32px',
+                height: '32px',
+                flex: 'none',
+                cursor: 'pointer',
+                color: 'var(--soft)',
+                fontSize: '15px',
+                lineHeight: 1,
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'var(--rosePale)';
+                e.target.style.color = 'var(--rose)';
+                e.target.style.borderColor = 'var(--rosePale)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'transparent';
+                e.target.style.color = 'var(--soft)';
+                e.target.style.borderColor = 'rgba(18,33,28,.16)';
+              }}
+            >
+              ×
+            </button>
+          </div>
         </div>
       ))}
     </>
