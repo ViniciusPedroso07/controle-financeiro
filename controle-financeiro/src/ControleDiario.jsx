@@ -653,21 +653,21 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   {/* número do dia, grande, ocupando a altura toda do cartão */}
                   <div style={{
                     flex: 'none',
-                    width: '52px',
+                    width: '42px',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
-                    justifyContent: 'space-between',
+                    justifyContent: 'flex-start',
                     borderRight: `1px solid ${C.rule}`,
                     paddingRight: '10px',
                   }}>
                     <div style={{
                       fontFamily: "'IBM Plex Mono', monospace",
                       fontVariantNumeric: 'tabular-nums',
-                      fontSize: '34px',
-                      fontWeight: 700,
+                      fontSize: '20px',
+                      fontWeight: 600,
                       lineHeight: 1,
-                      letterSpacing: '-0.03em',
+                      letterSpacing: '-0.01em',
                       color: L.ehHoje ? C.amber : L.fds ? C.soft : C.ink,
                     }}>
                       {String(L.dia).padStart(2, '0')}
@@ -798,7 +798,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                           padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left',
                         }}>
                           <span style={{
-                            fontSize: '19px', fontWeight: 700, letterSpacing: '-0.02em',
+                            fontSize: '14px', fontWeight: 600,
                             color: L.ehHoje ? C.amber : L.fds ? C.soft : C.ink,
                           }}>
                             {String(L.dia).padStart(2, '0')}
