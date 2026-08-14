@@ -330,7 +330,14 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 0.95,
           margin: '6px 0 18px', fontSize: 'clamp(30px, 7vw, 52px)',
         }}>
-          Vistta
+          Vistta <span style={{
+            fontWeight: 500,
+            fontSize: '0.42em',
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            color: C.soft,
+            whiteSpace: 'nowrap',
+          }}>— Controle Financeiro</span>
         </h1>
 
         <div style={{
