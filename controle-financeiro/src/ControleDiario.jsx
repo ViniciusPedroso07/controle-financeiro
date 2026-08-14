@@ -18,33 +18,13 @@ const C = {
 const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 const DIAS_SEM = ["dom","seg","ter","qua","qui","sex","sáb"];
-const CAT_VAR = ["Cartão de crédito","Mercado","Comer fora","Transporte","Saúde","Lazer","Compras","Viagem","Outros"];
 
-const FIXOS_INICIAIS = [
-  { id: "f1", nome: "Dízimo", dia: 5, valor: "" },
-  { id: "f2", nome: "Condomínio + Aluguel", dia: 10, valor: "" },
-  { id: "f3", nome: "Energia", dia: 15, valor: "" },
-  { id: "f4", nome: "Gás", dia: 15, valor: "" },
-  { id: "f5", nome: "Internet", dia: 20, valor: "" },
-  { id: "f6", nome: "Gatos", dia: 10, valor: "" },
-  { id: "f7", nome: "Formatura Nalin", dia: 10, valor: "" },
-];
+// sugestões de categoria — a pessoa pode digitar qualquer outra
+const CAT_SUGESTOES = ["Cartão de crédito","Mercado","Comer fora","Transporte","Saúde","Lazer","Compras","Viagem","Casa","Educação","Presentes","Outros"];
 
-const RENDAS_INICIAIS = [
-  { id: "r1", nome: "Meu salário", dia: 5, valor: "" },
-  { id: "r2", nome: "Salário da esposa", dia: 5, valor: "" },
-];
-
-const VARIAVEIS_INICIAIS = [
-  { id: "v1", nome: "Cartão de crédito", dia: 10, valor: "" },
-  { id: "v2", nome: "Viagem", dia: 15, valor: "" },
-];
-
-const SERIES = [
-  { key: "ganhos", cor: C.deep, label: "Ganhos" },
-  { key: "fixos", cor: C.steel, label: "Contas fixas" },
-  { key: "variaveis", cor: C.amber, label: "Variáveis" },
-];
+const RENDAS_INICIAIS = [{ id: "r1", nome: "", dia: 5, valor: "" }];
+const FIXOS_INICIAIS = [{ id: "f1", nome: "", dia: 10, valor: "" }];
+const VARIAVEIS_INICIAIS = [{ id: "v1", nome: "", dia: 10, valor: "", categoria: "" }];
 
 const PADRAO = {
   ano: new Date().getFullYear(),
@@ -79,10 +59,16 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const [carregando, setCarregando] = useState(true);
   const [aviso, setAviso] = useState("");
   const [abrirPainel, setAbrirPainel] = useState(true);
-  const [serieVisivel, setSerieVisivel] = useState({ ganhos: true, fixos: true, variaveis: true });
+  const [ehMobile, setEhMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 760 : false);
   const syncRef = useRef(null);
 
-  // Carregar dados do Supabase na primeira vez
+  useEffect(() => {
+    const aoRedimensionar = () => setEhMobile(window.innerWidth < 760);
+    window.addEventListener('resize', aoRedimensionar);
+    return () => window.removeEventListener('resize', aoRedimensionar);
+  }, []);
+
+  // Carregar dados do Supabase
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -104,33 +90,25 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         setCarregando(false);
       }
     };
-
     loadData();
   }, [familyCode]);
 
-  // Sincronizar quando dados mudam
+  // Salvar (debounce de 1s)
   useEffect(() => {
     if (carregando) return;
-
-    // Debounce: só salva após 1 segundo sem mudanças
     if (syncRef.current) clearTimeout(syncRef.current);
-
     syncRef.current = setTimeout(async () => {
       try {
-        await supabase
-          .from('families')
-          .update({ data: d })
-          .eq('code', familyCode);
+        await supabase.from('families').update({ data: d }).eq('code', familyCode);
       } catch (err) {
         console.error('Erro ao sincronizar:', err);
         setAviso('Erro ao salvar no servidor');
       }
     }, 1000);
-
     return () => clearTimeout(syncRef.current);
   }, [d]);
 
-  // Subscrevê em tempo real
+  // Tempo real
   useEffect(() => {
     const channel = supabase
       .channel(`family-${familyCode}`)
@@ -138,16 +116,11 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'families', filter: `code=eq.${familyCode}` },
         (payload) => {
-          if (payload.new && payload.new.data) {
-            setD(payload.new.data);
-          }
+          if (payload.new && payload.new.data) setD(payload.new.data);
         }
       )
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [familyCode]);
 
   const hoje = new Date();
@@ -168,9 +141,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       const total = diasNoMes(d.ano, m);
 
       if (antes) {
-        for (let dia = 1; dia <= total; dia++) {
-          saldos[chaveDia(d.ano, m, dia)] = 0;
-        }
+        for (let dia = 1; dia <= total; dia++) saldos[chaveDia(d.ano, m, dia)] = 0;
         mesesInfo.push({ abertura: 0, ganhos: 0, fixos: 0, baseDia: 0, variaveis: 0, sobra: 0, fim: 0, cats: {}, dias: total });
         continue;
       }
@@ -194,7 +165,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             const val = num(x.valor);
             varPlanejada += val;
             if (val > 0) {
-              const c = x.nome || "Variável";
+              const c = (x.categoria && x.categoria.trim()) || (x.nome && x.nome.trim()) || 'Sem categoria';
               cats[c] = (cats[c] || 0) + val;
             }
           }
@@ -204,7 +175,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         saldos[k] = saldo;
 
         if (avulso > 0) {
-          const c = reg.categoria || "Cartão de crédito";
+          const c = (reg.categoria && reg.categoria.trim()) || 'Sem categoria';
           cats[c] = (cats[c] || 0) + avulso;
         }
         variaveis += varPlanejada + avulso;
@@ -225,6 +196,15 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const noRitmo = mediaGasta <= r.baseDia;
   const antesDoInicio = mes < mesInicial;
 
+  // categorias já usadas, para sugerir na lista
+  const categoriasUsadas = useMemo(() => {
+    const usadas = new Set();
+    d.contasVariaveis.forEach((v) => { if (v.categoria && v.categoria.trim()) usadas.add(v.categoria.trim()); });
+    Object.values(d.dias).forEach((reg) => { if (reg?.categoria && reg.categoria.trim()) usadas.add(reg.categoria.trim()); });
+    CAT_SUGESTOES.forEach((c) => usadas.add(c));
+    return Array.from(usadas);
+  }, [d]);
+
   const setPadrao = (lista, id, campo, valor) =>
     setD((p) => ({ ...p, [lista]: p[lista].map((i) => (i.id === id ? { ...i, [campo]: valor } : i)) }));
 
@@ -234,11 +214,18 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   };
 
   const addLinha = (lista) =>
-    setD((p) => ({ ...p, [lista]: [...p[lista], { id: `${lista}${Date.now()}`, nome: "", dia: 10, valor: "" }] }));
+    setD((p) => ({
+      ...p,
+      [lista]: [...p[lista], {
+        id: `${lista}${Date.now()}`, nome: "", dia: 10, valor: "",
+        ...(lista === 'contasVariaveis' ? { categoria: "" } : {}),
+      }],
+    }));
   const delLinha = (lista, id) => setD((p) => ({ ...p, [lista]: p[lista].filter((i) => i.id !== id) }));
 
   const catsOrdenadas = Object.entries(r.cats).sort((a, b) => b[1] - a[1]);
   const maxCat = catsOrdenadas.length ? catsOrdenadas[0][1] : 1;
+  const totalCats = catsOrdenadas.reduce((s, [, v]) => s + v, 0);
   const maxMes = Math.max(1, ...Array.from({ length: totalDias }, (_, i) => Math.abs(calc.saldos[chaveDia(d.ano, mes, i + 1)] || 0)));
 
   const faixa = (v) => {
@@ -249,18 +236,44 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   if (carregando) {
     return (
-      <div style={{
-        background: C.paper,
-        color: C.soft,
-        minHeight: '100vh',
-        display: 'grid',
-        placeItems: 'center',
-        fontFamily: 'system-ui',
-      }}>
+      <div style={{ background: C.paper, color: C.soft, minHeight: '100vh', display: 'grid', placeItems: 'center', fontFamily: 'system-ui' }}>
         Carregando seu controle…
       </div>
     );
   }
+
+  // ── linhas do mês, usadas tanto na tabela (desktop) quanto nos cartões (celular) ──
+  const linhasDoMes = Array.from({ length: totalDias }, (_, i) => {
+    const dia = i + 1;
+    const k = chaveDia(d.ano, mes, dia);
+    const reg = d.dias[k] || {};
+    const sem = new Date(d.ano, mes, dia).getDay();
+    return {
+      dia, k, reg,
+      saldo: calc.saldos[k] || 0,
+      sem,
+      fds: sem === 0 || sem === 6,
+      ehHoje: k === hojeChave,
+      ents: antesDoInicio ? [] : d.rendas.filter((x) => Number(x.dia) === dia && num(x.valor) > 0),
+      fixs: antesDoInicio ? [] : d.fixos.filter((x) => Number(x.dia) === dia && num(x.valor) > 0),
+      vars: antesDoInicio ? [] : d.contasVariaveis.filter((x) => Number(x.dia) === dia && num(x.valor) > 0),
+    };
+  });
+
+  const etiqueta = (texto, bg, fg) => (
+    <span style={{
+      display: 'inline-block',
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '10.5px',
+      padding: '3px 7px',
+      borderRadius: '6px',
+      background: bg,
+      color: fg,
+      whiteSpace: 'nowrap',
+    }}>
+      {texto}
+    </span>
+  );
 
   return (
     <div style={{
@@ -268,7 +281,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       color: C.ink,
       minHeight: '100vh',
       fontFamily: 'Inter, system-ui, sans-serif',
-      padding: '20px 16px 56px',
+      padding: ehMobile ? '16px 12px 48px' : '20px 16px 56px',
       WebkitFontSmoothing: 'antialiased',
     }}>
       <style>{`
@@ -278,37 +291,21 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
       <div style={{ maxWidth: '1180px', margin: '0 auto' }}>
         <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '16px',
-          gap: '10px',
-          flexWrap: 'wrap'
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          marginBottom: '16px', gap: '10px', flexWrap: 'wrap',
         }}>
           <div style={{
             fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: '11px',
-            letterSpacing: '0.16em',
-            textTransform: 'uppercase',
-            color: C.soft,
+            fontSize: '11px', letterSpacing: '0.16em', textTransform: 'uppercase', color: C.soft,
           }}>
-            Controle diário · {d.ano} · Código: <strong>{familyCode}</strong>
+            {d.ano} · Código: <strong>{familyCode}</strong>
           </div>
           <button
             onClick={onSair}
             style={{
-              border: `1px solid ${C.rule}`,
-              background: 'transparent',
-              color: C.ink,
-              borderRadius: '8px',
-              padding: '8px 12px',
-              fontSize: '12px',
-              fontWeight: 500,
-              cursor: 'pointer',
-              transition: 'background 0.15s'
+              border: `1px solid ${C.rule}`, background: 'transparent', color: C.ink,
+              borderRadius: '8px', padding: '8px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer',
             }}
-            onMouseEnter={(e) => e.target.style.background = '#E4E8DF'}
-            onMouseLeave={(e) => e.target.style.background = 'transparent'}
           >
             Sair
           </button>
@@ -316,29 +313,19 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
         <h1 style={{
           fontFamily: "'Bricolage Grotesque', system-ui",
-          fontWeight: 800,
-          letterSpacing: '-0.03em',
-          lineHeight: 0.92,
-          margin: '6px 0 18px',
-          fontSize: 'clamp(30px, 7vw, 52px)'
+          fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 0.95,
+          margin: '6px 0 18px', fontSize: 'clamp(30px, 7vw, 52px)',
         }}>
-          Quanto dá<br />para gastar hoje
+          Controle Financeiro
         </h1>
 
         <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          flexWrap: 'wrap',
-          marginTop: '14px',
-          marginBottom: '16px'
+          display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+          marginTop: '14px', marginBottom: '16px',
         }}>
           <span style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: '11px',
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-            color: C.soft,
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px',
+            letterSpacing: '0.1em', textTransform: 'uppercase', color: C.soft,
           }}>
             Começar a valer em
           </span>
@@ -350,84 +337,42 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
               setMes(v);
             }}
             style={{
-              fontFamily: "'Bricolage Grotesque', sans-serif",
-              fontWeight: 700,
-              fontSize: '14px',
-              color: C.ink,
-              background: C.card,
-              border: `1px solid ${C.rule}`,
-              borderRadius: '8px',
-              padding: '7px 12px',
-              cursor: 'pointer',
+              fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '14px',
+              color: C.ink, background: C.card, border: `1px solid ${C.rule}`,
+              borderRadius: '8px', padding: '7px 12px', cursor: 'pointer',
             }}
           >
             {MESES.map((m, i) => <option key={m} value={i}>{m}</option>)}
           </select>
-          <span style={{
-            fontSize: '12px',
-            color: C.soft,
-          }}>
-            tudo antes disso fica zerado
-          </span>
+          <span style={{ fontSize: '12px', color: C.soft }}>tudo antes disso fica zerado</span>
         </div>
 
+        {/* saldo do mês — centralizado, sem menção a quem usa */}
         <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
-          gap: '16px',
-          border: `1px solid ${C.rule}`,
-          background: C.card,
-          borderRadius: '14px',
-          padding: '20px',
-          margin: '18px 0',
+          border: `1px solid ${C.rule}`, background: C.card, borderRadius: '14px',
+          padding: ehMobile ? '20px 16px' : '26px 20px', margin: '18px 0', textAlign: 'center',
         }}>
-          <div>
-            <div style={{
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: '10px',
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-              color: C.soft,
-              marginBottom: '6px'
-            }}>
-              Saldo no fim de {MESES[mes].toLowerCase()}
-            </div>
-            <div style={{
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontVariantNumeric: 'tabular-nums',
-              fontWeight: 600,
-              fontSize: 'clamp(24px, 5vw, 36px)',
-              lineHeight: 1,
-              color: r.fim < 0 ? C.rose : C.deep,
-            }}>
-              {brl(r.fim)}
-            </div>
+          <div style={{
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
+            letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft, marginBottom: '8px',
+          }}>
+            Saldo no fim de {MESES[mes].toLowerCase()}
           </div>
           <div style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            justifyContent: 'flex-end'
+            fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+            fontWeight: 600, fontSize: 'clamp(28px, 8vw, 44px)', lineHeight: 1,
+            color: r.fim < 0 ? C.rose : C.deep,
           }}>
-            <div style={{
-              fontSize: '12px',
-              color: C.soft,
-              textAlign: 'right',
-              lineHeight: 1.6,
-            }}>
-              {antesDoInicio
-                ? `Este mês fica zerado — o controle começa em ${MESES[mesInicial].toLowerCase()}.`
-                : "Sincroniza em tempo real com o celular da sua esposa."}
-            </div>
+            {brl(r.fim)}
           </div>
+          {antesDoInicio && (
+            <div style={{ fontSize: '12px', color: C.soft, marginTop: '10px' }}>
+              Este mês fica zerado — o controle começa em {MESES[mesInicial].toLowerCase()}.
+            </div>
+          )}
         </div>
 
-        <div style={{
-          display: 'flex',
-          gap: '4px',
-          overflowX: 'auto',
-          marginBottom: '16px',
-          paddingBottom: '6px'
-        }}>
+        <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', marginBottom: '16px', paddingBottom: '6px' }}>
           {MESES.map((m, i) => {
             const v = calc.mesesInfo[i].fim;
             const on = i === mes;
@@ -437,36 +382,23 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 key={m}
                 onClick={() => setMes(i)}
                 style={{
-                  flex: '1 0 auto',
-                  minWidth: '64px',
-                  border: `1px solid ${C.rule}`,
+                  flex: '1 0 auto', minWidth: '62px',
+                  border: `1px solid ${on ? C.ink : C.rule}`,
                   background: on ? C.ink : 'transparent',
-                  borderColor: on ? C.ink : C.rule,
-                  borderRadius: '9px',
-                  padding: '8px 6px',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  transition: 'background 0.15s',
+                  borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
                   opacity: desativado && !on ? 0.45 : 1,
                 }}
-                onMouseEnter={(e) => { if (!on && !desativado) e.target.style.background = '#E4E8DF'; }}
-                onMouseLeave={(e) => { if (!on) e.target.style.background = 'transparent'; }}
               >
                 <div style={{
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  fontSize: '11px',
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px',
+                  letterSpacing: '0.1em', textTransform: 'uppercase',
                   color: on ? '#AFC0B7' : C.soft,
                 }}>
                   {ABREV[i]}
                 </div>
                 <div style={{
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  fontVariantNumeric: 'tabular-nums',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  marginTop: '3px',
+                  fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                  fontSize: '13px', fontWeight: 600, marginTop: '3px',
                   color: on ? (v < 0 ? '#F0A9A3' : '#8FD9BE') : v < 0 ? C.rose : C.deep,
                 }}>
                   {curto(v)}
@@ -478,41 +410,27 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
         {aviso && (
           <div style={{
-            border: `1px solid ${C.rosePale}`,
-            background: C.rosePale,
-            color: C.rose,
-            borderRadius: '10px',
-            padding: '10px 13px',
-            fontSize: '13px',
-            margin: '14px 0'
+            border: `1px solid ${C.rosePale}`, background: C.rosePale, color: C.rose,
+            borderRadius: '10px', padding: '10px 13px', fontSize: '13px', margin: '14px 0',
           }}>
             {aviso}
           </div>
         )}
 
+        {/* base por dia */}
         <div style={{
-          border: `1px solid ${C.pale}`,
-          background: '#E7F0E9',
-          borderRadius: '12px',
-          padding: '16px 18px',
-          marginBottom: '18px',
+          border: `1px solid ${C.pale}`, background: '#E7F0E9', borderRadius: '12px',
+          padding: '16px 18px', marginBottom: '18px',
         }}>
           <div style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: '10px',
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            color: C.soft,
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
+            letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
           }}>
             Base por dia em {MESES[mes].toLowerCase()}
           </div>
           <div style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontVariantNumeric: 'tabular-nums',
-            fontSize: 'clamp(24px, 5vw, 32px)',
-            fontWeight: 600,
-            lineHeight: 1,
-            marginTop: '6px',
+            fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+            fontSize: 'clamp(24px, 5vw, 32px)', fontWeight: 600, lineHeight: 1, marginTop: '6px',
             color: r.baseDia < 0 ? C.rose : C.deep,
           }}>
             {brl(r.baseDia)}
@@ -521,38 +439,27 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             </span>
           </div>
           <div style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: '11.5px',
-            color: C.soft,
-            marginTop: '10px',
-            lineHeight: 1.7,
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: '11.5px',
+            color: C.soft, marginTop: '10px', lineHeight: 1.7,
           }}>
             ({brl(r.ganhos)} de ganhos − {brl(r.fixos)} de contas fixas) ÷ {totalDias} dias
           </div>
-          <p style={{
-            fontSize: '12px',
-            color: C.soft,
-            marginTop: '10px',
-            lineHeight: 1.6,
-          }}>
-            {antesDoInicio ? (
-              `Mês anterior ao início do controle — sem lançamentos aqui.`
-            ) : r.variaveis > 0 ? (
-              <>
-                Você já gastou <strong style={{ color: noRitmo ? C.deep : C.rose }}>{brl(mediaGasta)} por dia</strong> em
-                média este mês — {noRitmo ? "dentro da base." : "acima da base."}
-              </>
-            ) : (
-              "Lance os gastos variados na tabela e este número ganha um comparativo do quanto você está gastando de verdade."
-            )}
+          <p style={{ fontSize: '12px', color: C.soft, marginTop: '10px', lineHeight: 1.6 }}>
+            {antesDoInicio
+              ? 'Mês anterior ao início do controle — sem lançamentos aqui.'
+              : r.variaveis > 0 ? (
+                <>
+                  Você já gastou <strong style={{ color: noRitmo ? C.deep : C.rose }}>{brl(mediaGasta)} por dia</strong> em
+                  média este mês — {noRitmo ? 'dentro da base.' : 'acima da base.'}
+                </>
+              ) : 'Lance os gastos na tabela e este número ganha um comparativo do quanto você está gastando de verdade.'}
           </p>
         </div>
 
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-          gap: '10px',
-          margin: '18px 0',
+          gridTemplateColumns: ehMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))',
+          gap: '10px', margin: '18px 0',
         }}>
           {[
             { lab: "Vem do mês anterior", val: brl(r.abertura), cor: r.abertura < 0 ? C.rose : C.ink },
@@ -562,27 +469,17 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             { lab: "Sobra do mês", val: brl(r.sobra), cor: r.sobra < 0 ? C.rose : C.deep },
           ].map((box, i) => (
             <div key={i} style={{
-              border: `1px solid ${C.rule}`,
-              background: C.card,
-              borderRadius: '11px',
-              padding: '12px 13px',
+              border: `1px solid ${C.rule}`, background: C.card, borderRadius: '11px', padding: '12px 13px',
             }}>
               <div style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: '10px',
-                letterSpacing: '0.12em',
-                textTransform: 'uppercase',
-                color: C.soft,
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
+                letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
               }}>
                 {box.lab}
               </div>
               <div style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontVariantNumeric: 'tabular-nums',
-                fontSize: '17px',
-                fontWeight: 600,
-                marginTop: '5px',
-                color: box.cor,
+                fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                fontSize: '16px', fontWeight: 600, marginTop: '5px', color: box.cor,
               }}>
                 {box.val}
               </div>
@@ -590,56 +487,33 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           ))}
         </div>
 
-        {/* Painel de ganhos, fixos e variáveis */}
+        {/* painel dos três blocos */}
         <div style={{
-          border: `1px solid ${C.rule}`,
-          background: C.card,
-          borderRadius: '14px',
-          padding: '16px 18px',
-          marginBottom: '18px',
+          border: `1px solid ${C.rule}`, background: C.card, borderRadius: '14px',
+          padding: ehMobile ? '14px' : '16px 18px', marginBottom: '18px',
         }}>
           <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '12px',
-            flexWrap: 'wrap',
-            marginBottom: '16px'
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: '12px', flexWrap: 'wrap', marginBottom: '16px',
           }}>
             <div>
               <h2 style={{
-                fontFamily: "'Bricolage Grotesque', sans-serif",
-                fontWeight: 700,
-                fontSize: '16px',
-                letterSpacing: '-0.01em',
-                margin: '0 0 3px',
+                fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
+                fontSize: '16px', letterSpacing: '-0.01em', margin: '0 0 3px',
               }}>
                 Ganhos, contas fixas e variáveis
               </h2>
-              <p style={{
-                fontSize: '12px',
-                color: C.soft,
-                margin: '3px 0 0',
-              }}>
-                Escreva o nome, o dia e o valor. Vale a partir de {ABREV[mesInicial]} e aparece sozinho na tabela.
+              <p style={{ fontSize: '12px', color: C.soft, margin: '3px 0 0' }}>
+                Escreva o nome, o dia e o valor. Vale a partir de {ABREV[mesInicial]} e aparece sozinho no calendário.
               </p>
             </div>
             <button
               onClick={() => setAbrirPainel(!abrirPainel)}
               style={{
-                border: `1px solid ${C.rule}`,
-                background: 'transparent',
-                color: C.ink,
-                borderRadius: '9px',
-                padding: '9px 14px',
-                fontSize: '13px',
-                fontWeight: 500,
-                cursor: 'pointer',
-                transition: 'background 0.15s',
-                whiteSpace: 'nowrap',
+                border: `1px solid ${C.rule}`, background: 'transparent', color: C.ink,
+                borderRadius: '9px', padding: '9px 14px', fontSize: '13px', fontWeight: 500,
+                cursor: 'pointer', whiteSpace: 'nowrap',
               }}
-              onMouseEnter={(e) => e.target.style.background = '#E4E8DF'}
-              onMouseLeave={(e) => e.target.style.background = 'transparent'}
             >
               {abrirPainel ? 'Fechar' : 'Abrir'}
             </button>
@@ -647,575 +521,301 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
           {abrirPainel && (
             <>
-              <div style={{
-                borderRadius: '12px',
-                padding: '14px 16px 16px',
-                marginTop: '16px',
-                background: '#DCEEE4',
-                borderTop: `4px solid ${C.deep}`,
-              }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '9px',
-                  fontFamily: "'Bricolage Grotesque', sans-serif",
-                  fontSize: '14.5px',
-                  fontWeight: 700,
-                  letterSpacing: '-0.01em',
-                  marginBottom: '12px',
-                  color: C.deep,
-                }}>
-                  <span style={{
-                    width: '11px',
-                    height: '11px',
-                    borderRadius: '50%',
-                    background: C.deep,
-                    boxShadow: `0 0 0 3px rgba(255,255,255,.5)`,
-                  }} />
-                  Entra
-                </div>
+              <Bloco cor={C.deep} fundo="#DCEEE4" titulo="Entra">
                 <TabelaItens
                   itens={d.rendas}
+                  exemploNome="ex: Salário"
                   onNome={(id, v) => setPadrao('rendas', id, 'nome', v)}
                   onDia={(id, v) => setPadrao('rendas', id, 'dia', v)}
                   onValor={(id, v) => setPadrao('rendas', id, 'valor', v)}
                   onDel={(id) => delLinha('rendas', id)}
                 />
-                <button
-                  onClick={() => addLinha('rendas')}
-                  style={{
-                    border: `1px solid rgba(18,33,28,.18)`,
-                    background: 'rgba(255,255,255,.55)',
-                    color: C.ink,
-                    borderRadius: '9px',
-                    padding: '9px 14px',
-                    fontSize: '13px',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    marginTop: '10px',
-                  }}
-                >
-                  + Outra entrada
-                </button>
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'baseline',
-                  marginTop: '10px',
-                  paddingTop: '10px',
-                  borderTop: `1px solid rgba(18,33,28,.14)`,
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  fontVariantNumeric: 'tabular-nums',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                }}>
-                  <span>Total que entra</span>
-                  <span style={{ color: C.deep }}>{brl(calc.mesesInfo[mesInicial]?.ganhos ?? 0)}</span>
-                </div>
-              </div>
+                <BotaoAdd onClick={() => addLinha('rendas')}>+ Outra entrada</BotaoAdd>
+                <Total label="Total que entra" valor={brl(calc.mesesInfo[mesInicial]?.ganhos ?? 0)} cor={C.deep} />
+              </Bloco>
 
-              <div style={{
-                borderRadius: '12px',
-                padding: '14px 16px 16px',
-                marginTop: '16px',
-                background: '#E1E7EF',
-                borderTop: `4px solid ${C.steel}`,
-              }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '9px',
-                  fontFamily: "'Bricolage Grotesque', sans-serif",
-                  fontSize: '14.5px',
-                  fontWeight: 700,
-                  letterSpacing: '-0.01em',
-                  marginBottom: '12px',
-                  color: C.steel,
-                }}>
-                  <span style={{
-                    width: '11px',
-                    height: '11px',
-                    borderRadius: '50%',
-                    background: C.steel,
-                    boxShadow: `0 0 0 3px rgba(255,255,255,.5)`,
-                  }} />
-                  Sai todo mês (contas fixas)
-                </div>
+              <Bloco cor={C.steel} fundo="#E1E7EF" titulo="Sai todo mês (contas fixas)">
                 <TabelaItens
                   itens={d.fixos}
+                  exemploNome="ex: Aluguel"
                   onNome={(id, v) => setPadrao('fixos', id, 'nome', v)}
                   onDia={(id, v) => setPadrao('fixos', id, 'dia', v)}
                   onValor={(id, v) => setPadrao('fixos', id, 'valor', v)}
                   onDel={(id) => delLinha('fixos', id)}
                 />
-                <button
-                  onClick={() => addLinha('fixos')}
-                  style={{
-                    border: `1px solid rgba(18,33,28,.18)`,
-                    background: 'rgba(255,255,255,.55)',
-                    color: C.ink,
-                    borderRadius: '9px',
-                    padding: '9px 14px',
-                    fontSize: '13px',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    marginTop: '10px',
-                  }}
-                >
-                  + Outra conta fixa
-                </button>
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'baseline',
-                  marginTop: '10px',
-                  paddingTop: '10px',
-                  borderTop: `1px solid rgba(18,33,28,.14)`,
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  fontVariantNumeric: 'tabular-nums',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                }}>
-                  <span>Total de contas fixas</span>
-                  <span style={{ color: C.steel }}>{brl(calc.mesesInfo[mesInicial]?.fixos ?? 0)}</span>
-                </div>
-              </div>
+                <BotaoAdd onClick={() => addLinha('fixos')}>+ Outra conta fixa</BotaoAdd>
+                <Total label="Total de contas fixas" valor={brl(calc.mesesInfo[mesInicial]?.fixos ?? 0)} cor={C.steel} />
+              </Bloco>
 
-              <div style={{
-                borderRadius: '12px',
-                padding: '14px 16px 16px',
-                marginTop: '16px',
-                background: '#F3E6CC',
-                borderTop: `4px solid ${C.amber}`,
-              }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '9px',
-                  fontFamily: "'Bricolage Grotesque', sans-serif",
-                  fontSize: '14.5px',
-                  fontWeight: 700,
-                  letterSpacing: '-0.01em',
-                  marginBottom: '12px',
-                  color: C.amber,
-                }}>
-                  <span style={{
-                    width: '11px',
-                    height: '11px',
-                    borderRadius: '50%',
-                    background: C.amber,
-                    boxShadow: `0 0 0 3px rgba(255,255,255,.5)`,
-                  }} />
-                  Contas variáveis
-                </div>
-                <p style={{
-                  fontSize: '12px',
-                  color: C.soft,
-                  marginTop: '-4px',
-                  marginBottom: '10px',
-                  lineHeight: 1.6,
-                }}>
-                  Cartão de crédito, viagem — coisas que voltam todo mês, mas o valor muda.
+              <Bloco cor={C.amber} fundo="#F3E6CC" titulo="Contas variáveis">
+                <p style={{ fontSize: '12px', color: C.soft, marginTop: '-4px', marginBottom: '12px', lineHeight: 1.6 }}>
+                  Gastos cujo valor você não sabe de antemão. Marque uma categoria para acompanhar no
+                  ranking do mês.
                 </p>
                 <TabelaItens
                   itens={d.contasVariaveis}
+                  exemploNome="ex: Rodízio japonês"
+                  comCategoria
+                  categorias={categoriasUsadas}
                   onNome={(id, v) => setPadrao('contasVariaveis', id, 'nome', v)}
                   onDia={(id, v) => setPadrao('contasVariaveis', id, 'dia', v)}
                   onValor={(id, v) => setPadrao('contasVariaveis', id, 'valor', v)}
+                  onCategoria={(id, v) => setPadrao('contasVariaveis', id, 'categoria', v)}
                   onDel={(id) => delLinha('contasVariaveis', id)}
                 />
-                <button
-                  onClick={() => addLinha('contasVariaveis')}
-                  style={{
-                    border: `1px solid rgba(18,33,28,.18)`,
-                    background: 'rgba(255,255,255,.55)',
-                    color: C.ink,
-                    borderRadius: '9px',
-                    padding: '9px 14px',
-                    fontSize: '13px',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    marginTop: '10px',
-                  }}
-                >
-                  + Outra conta variável
-                </button>
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'baseline',
-                  marginTop: '10px',
-                  paddingTop: '10px',
-                  borderTop: `1px solid rgba(18,33,28,.14)`,
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  fontVariantNumeric: 'tabular-nums',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                }}>
-                  <span>Total de contas variáveis</span>
-                  <span style={{ color: C.amber }}>{brl(calc.variaveisTotalTipico)}</span>
-                </div>
-              </div>
+                <BotaoAdd onClick={() => addLinha('contasVariaveis')}>+ Outra conta variável</BotaoAdd>
+                <Total label="Total de contas variáveis" valor={brl(calc.variaveisTotalTipico)} cor={C.amber} />
+              </Bloco>
             </>
           )}
         </div>
 
-        {/* Tabela diária */}
+        {/* calendário do mês */}
         <h2 style={{
           fontFamily: "'Bricolage Grotesque', system-ui",
-          fontSize: 'clamp(22px, 4.4vw, 30px)',
-          fontWeight: 800,
-          marginBottom: '4px',
+          fontSize: 'clamp(22px, 4.4vw, 30px)', fontWeight: 800, marginBottom: '4px',
         }}>
           {MESES[mes]}
         </h2>
-        <p style={{
-          fontSize: '12px',
-          color: C.soft,
-          marginBottom: '12px',
-        }}>
-          Só a coluna de gasto avulso é sua — o resto entra sozinho.
+        <p style={{ fontSize: '12px', color: C.soft, marginBottom: '12px' }}>
+          Só o gasto avulso é seu para preencher — o resto entra sozinho.
         </p>
 
-        <div style={{
-          border: `1px solid ${C.rule}`,
-          borderRadius: '14px',
-          overflow: 'hidden',
-          background: C.card,
-          marginBottom: '18px',
-        }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{
-              width: '100%',
-              borderCollapse: 'collapse',
-              minWidth: '600px',
-            }}>
-              <thead>
-                <tr>
-                  <th style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: '10px',
-                    letterSpacing: '0.12em',
-                    textTransform: 'uppercase',
-                    color: C.soft,
-                    fontWeight: 500,
-                    textAlign: 'left',
-                    padding: '11px 10px',
-                    background: '#E7EAE2',
-                    borderBottom: `1px solid ${C.rule}`,
-                  }}>
-                    Dia
-                  </th>
-                  <th style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: '10px',
-                    letterSpacing: '0.12em',
-                    textTransform: 'uppercase',
-                    color: C.soft,
-                    fontWeight: 500,
-                    textAlign: 'left',
-                    padding: '11px 10px',
-                    background: '#E7EAE2',
-                    borderBottom: `1px solid ${C.rule}`,
-                  }}>
-                    Lançamentos automáticos
-                  </th>
-                  <th style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: '10px',
-                    letterSpacing: '0.12em',
-                    textTransform: 'uppercase',
-                    color: C.soft,
-                    fontWeight: 500,
-                    textAlign: 'right',
-                    padding: '11px 10px',
-                    background: '#E7EAE2',
-                    borderBottom: `1px solid ${C.rule}`,
-                  }}>
-                    Gasto avulso
-                  </th>
-                  <th style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: '10px',
-                    letterSpacing: '0.12em',
-                    textTransform: 'uppercase',
-                    color: C.soft,
-                    fontWeight: 500,
-                    textAlign: 'right',
-                    padding: '11px 10px',
-                    background: '#E7EAE2',
-                    borderBottom: `1px solid ${C.rule}`,
-                  }}>
-                    Categoria
-                  </th>
-                  <th style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: '10px',
-                    letterSpacing: '0.12em',
-                    textTransform: 'uppercase',
-                    color: C.soft,
-                    fontWeight: 500,
-                    textAlign: 'right',
-                    padding: '11px 10px',
-                    background: '#E7EAE2',
-                    borderBottom: `1px solid ${C.rule}`,
-                  }}>
-                    Saldo
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: totalDias }, (_, i) => {
-                  const dia = i + 1;
-                  const k = chaveDia(d.ano, mes, dia);
-                  const reg = d.dias[k] || {};
-                  const saldo = calc.saldos[k] || 0;
-                  const cor = faixa(saldo);
-                  const sem = new Date(d.ano, mes, dia).getDay();
-                  const fds = sem === 0 || sem === 6;
-                  const ents = antesDoInicio ? [] : d.rendas.filter((x) => Number(x.dia) === dia && num(x.valor) > 0);
-                  const fixs = antesDoInicio ? [] : d.fixos.filter((x) => Number(x.dia) === dia && num(x.valor) > 0);
-                  const vars = antesDoInicio ? [] : d.contasVariaveis.filter((x) => Number(x.dia) === dia && num(x.valor) > 0);
+        {ehMobile ? (
+          <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
+            {linhasDoMes.map((L) => {
+              const cor = faixa(L.saldo);
+              const temAlgo = L.ents.length || L.fixs.length || L.vars.length || num(L.reg.valor) > 0;
+              return (
+                <div key={L.dia} style={{
+                  border: `1px solid ${L.ehHoje ? C.amber : C.rule}`,
+                  borderLeft: `4px solid ${L.ehHoje ? C.amber : temAlgo ? cor.barra : C.rule}`,
+                  background: C.card, borderRadius: '11px', padding: '12px 13px',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
+                      <span style={{ fontSize: '17px', fontWeight: 700, color: L.fds ? C.soft : C.ink }}>
+                        {String(L.dia).padStart(2, '0')}
+                      </span>
+                      <span style={{
+                        fontSize: '10px', color: C.soft, marginLeft: '6px',
+                        textTransform: 'uppercase', letterSpacing: '0.08em',
+                      }}>
+                        {DIAS_SEM[L.sem]}{L.ehHoje ? ' · hoje' : ''}
+                      </span>
+                    </div>
+                    <div style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '14px', fontWeight: 700,
+                      background: cor.bg, color: cor.fg,
+                      padding: '4px 9px', borderRadius: '7px', whiteSpace: 'nowrap',
+                    }}>
+                      {brl(L.saldo)}
+                    </div>
+                  </div>
 
-                  return (
-                    <tr
-                      key={dia}
+                  {(L.ents.length > 0 || L.fixs.length > 0 || L.vars.length > 0) && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '9px' }}>
+                      {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
+                      {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                      {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="Gasto avulso"
+                      value={L.reg.valor ?? ''}
+                      onChange={(e) => setDia(L.dia, 'valor', e.target.value)}
                       style={{
-                        background: fds ? 'rgba(18,33,28,0.02)' : 'transparent',
-                        boxShadow: k === hojeChave ? `inset 3px 0 0 ${C.amber}` : 'none',
+                        flex: '1 1 auto', minWidth: 0,
+                        border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
+                        padding: '9px 10px', fontFamily: "'IBM Plex Mono', monospace",
+                        fontVariantNumeric: 'tabular-nums', fontSize: '14px',
+                        color: num(L.reg.valor) > 0 ? C.rose : C.ink,
+                        fontWeight: num(L.reg.valor) > 0 ? 600 : 400,
+                        textAlign: 'right',
                       }}
-                    >
-                      <td style={{
-                        fontFamily: "'IBM Plex Mono', monospace",
-                        fontVariantNumeric: 'tabular-nums',
-                        padding: '12px 10px',
-                        borderBottom: `1px solid #E2E6DE`,
-                        textAlign: 'left',
-                      }}>
-                        <span style={{ fontSize: '14px', fontWeight: 600 }}>
-                          {String(dia).padStart(2, '0')}
-                        </span>
-                        <span style={{
-                          fontSize: '10px',
-                          color: C.soft,
-                          marginLeft: '5px',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.06em',
-                        }}>
-                          {DIAS_SEM[sem]}
-                        </span>
-                      </td>
-                      <td style={{
-                        padding: '12px 10px',
-                        borderBottom: `1px solid #E2E6DE`,
-                        textAlign: 'left',
-                      }}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                          {ents.map((x) => (
-                            <span key={x.id} style={{
-                              display: 'inline-block',
-                              fontFamily: "'IBM Plex Mono', monospace",
-                              fontSize: '10.5px',
-                              padding: '3px 7px',
-                              borderRadius: '6px',
-                              background: C.pale,
-                              color: C.deep,
-                              whiteSpace: 'nowrap',
-                            }}>
-                              + {x.nome || 'entrada'} {curto(num(x.valor))}
-                            </span>
-                          ))}
-                          {fixs.map((x) => (
-                            <span key={x.id} style={{
-                              display: 'inline-block',
-                              fontFamily: "'IBM Plex Mono', monospace",
-                              fontSize: '10.5px',
-                              padding: '3px 7px',
-                              borderRadius: '6px',
-                              background: '#E6E9E2',
-                              color: C.soft,
-                              whiteSpace: 'nowrap',
-                            }}>
-                              − {x.nome || 'conta'} {curto(num(x.valor))}
-                            </span>
-                          ))}
-                          {vars.map((x) => (
-                            <span key={x.id} style={{
-                              display: 'inline-block',
-                              fontFamily: "'IBM Plex Mono', monospace",
-                              fontSize: '10.5px',
-                              padding: '3px 7px',
-                              borderRadius: '6px',
-                              background: '#F3E6CC',
-                              color: C.amber,
-                              whiteSpace: 'nowrap',
-                            }}>
-                              − {x.nome || 'variável'} {curto(num(x.valor))}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td style={{
-                        padding: '12px 6px',
-                        borderBottom: `1px solid #E2E6DE`,
-                        textAlign: 'right',
-                      }}>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="—"
-                          value={reg.valor ?? ""}
-                          onChange={(e) => setDia(dia, "valor", e.target.value)}
-                          style={{
-                            width: '100%',
-                            border: 0,
-                            background: 'transparent',
-                            textAlign: 'right',
-                            fontFamily: "'IBM Plex Mono', monospace",
-                            fontVariantNumeric: 'tabular-nums',
-                            fontSize: '14px',
-                            color: num(reg.valor) > 0 ? C.rose : C.ink,
-                            fontWeight: num(reg.valor) > 0 ? 600 : 400,
-                            padding: '9px 8px',
-                            borderRadius: '7px',
-                          }}
-                          onFocus={(e) => e.target.style.background = '#fff'}
-                          onBlur={(e) => e.target.style.background = 'transparent'}
-                        />
-                      </td>
-                      <td style={{
-                        padding: '12px 6px',
-                        borderBottom: `1px solid #E2E6DE`,
-                        textAlign: 'right',
-                      }}>
-                        {num(reg.valor) > 0 ? (
-                          <select
-                            value={reg.categoria || "Cartão de crédito"}
-                            onChange={(e) => setDia(dia, "categoria", e.target.value)}
-                            style={{
-                              width: '100%',
-                              border: `1px dashed ${C.rule}`,
-                              background: 'transparent',
-                              borderRadius: '7px',
-                              fontFamily: 'Inter, sans-serif',
-                              fontSize: '11px',
-                              color: C.soft,
-                              padding: '5px 6px',
-                            }}
-                          >
-                            {CAT_VAR.map((c) => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                        ) : null}
-                      </td>
-                      <td style={{
-                        textAlign: 'right',
-                        fontFamily: "'IBM Plex Mono', monospace",
-                        fontVariantNumeric: 'tabular-nums',
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        padding: '0 14px 0 10px',
-                        borderBottom: `1px solid #E2E6DE`,
-                        background: cor.bg,
-                        color: cor.fg,
-                        position: 'relative',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        <span style={{
-                          position: 'absolute',
-                          left: 0,
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          height: '20px',
-                          width: '3px',
-                          borderRadius: '2px',
-                          background: cor.barra,
-                          opacity: 0.65,
-                        }} />
-                        {brl(saldo)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                    />
+                    {num(L.reg.valor) > 0 && (
+                      <input
+                        type="text"
+                        list="cd-categorias"
+                        placeholder="Categoria"
+                        value={L.reg.categoria || ''}
+                        onChange={(e) => setDia(L.dia, 'categoria', e.target.value)}
+                        style={{
+                          flex: '1 1 auto', minWidth: 0,
+                          border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
+                          padding: '9px 10px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px', color: C.ink,
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </div>
+        ) : (
+          <div style={{
+            border: `1px solid ${C.rule}`, borderRadius: '14px', overflow: 'hidden',
+            background: C.card, marginBottom: '18px',
+          }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '600px' }}>
+                <thead>
+                  <tr>
+                    {['Dia', 'Lançamentos automáticos', 'Gasto avulso', 'Categoria', 'Saldo'].map((h, i) => (
+                      <th key={h} style={{
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
+                        letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
+                        fontWeight: 500, textAlign: i < 2 ? 'left' : 'right',
+                        padding: '11px 10px', background: '#E7EAE2', borderBottom: `1px solid ${C.rule}`,
+                      }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {linhasDoMes.map((L) => {
+                    const cor = faixa(L.saldo);
+                    return (
+                      <tr key={L.dia} style={{
+                        background: L.fds ? 'rgba(18,33,28,0.02)' : 'transparent',
+                        boxShadow: L.ehHoje ? `inset 3px 0 0 ${C.amber}` : 'none',
+                      }}>
+                        <td style={{
+                          fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                          padding: '12px 10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left',
+                        }}>
+                          <span style={{ fontSize: '14px', fontWeight: 600 }}>{String(L.dia).padStart(2, '0')}</span>
+                          <span style={{
+                            fontSize: '10px', color: C.soft, marginLeft: '5px',
+                            textTransform: 'uppercase', letterSpacing: '0.06em',
+                          }}>
+                            {DIAS_SEM[L.sem]}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
+                            {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                            {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="—"
+                            value={L.reg.valor ?? ''}
+                            onChange={(e) => setDia(L.dia, 'valor', e.target.value)}
+                            style={{
+                              width: '100%', border: 0, background: 'transparent', textAlign: 'right',
+                              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                              fontSize: '14px',
+                              color: num(L.reg.valor) > 0 ? C.rose : C.ink,
+                              fontWeight: num(L.reg.valor) > 0 ? 600 : 400,
+                              padding: '9px 8px', borderRadius: '7px',
+                            }}
+                          />
+                        </td>
+                        <td style={{ padding: '12px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
+                          {num(L.reg.valor) > 0 && (
+                            <input
+                              type="text"
+                              list="cd-categorias"
+                              placeholder="Categoria"
+                              value={L.reg.categoria || ''}
+                              onChange={(e) => setDia(L.dia, 'categoria', e.target.value)}
+                              style={{
+                                width: '100%', border: `1px dashed ${C.rule}`, background: 'transparent',
+                                borderRadius: '7px', fontFamily: 'Inter, sans-serif', fontSize: '11.5px',
+                                color: C.ink, padding: '6px 7px',
+                              }}
+                            />
+                          )}
+                        </td>
+                        <td style={{
+                          textAlign: 'right', fontFamily: "'IBM Plex Mono', monospace",
+                          fontVariantNumeric: 'tabular-nums', fontSize: '14px', fontWeight: 600,
+                          padding: '0 14px 0 10px', borderBottom: '1px solid #E2E6DE',
+                          background: cor.bg, color: cor.fg, whiteSpace: 'nowrap',
+                        }}>
+                          {brl(L.saldo)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
-        <p style={{
-          fontSize: '12px',
-          color: C.soft,
-          marginTop: '14px',
-          lineHeight: 1.6,
-        }}>
-          Verde escuro é folga, verde claro é aperto, rosa é dia no vermelho. A barra âmbar marca hoje.
+        <datalist id="cd-categorias">
+          {categoriasUsadas.map((c) => <option key={c} value={c} />)}
+        </datalist>
+
+        <p style={{ fontSize: '12px', color: C.soft, marginTop: '14px', lineHeight: 1.6 }}>
+          Verde escuro é folga, verde claro é aperto, rosa é dia no vermelho. A marca âmbar indica hoje.
         </p>
 
-        {/* Painéis de resumo */}
+        {/* painéis de resumo */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-          gap: '18px',
-          marginTop: '18px',
+          gridTemplateColumns: ehMobile ? '1fr' : 'repeat(auto-fit, minmax(300px, 1fr))',
+          gap: '18px', marginTop: '18px',
         }}>
           <div style={{
-            border: `1px solid ${C.rule}`,
-            background: C.card,
-            borderRadius: '14px',
-            padding: '16px 18px',
+            border: `1px solid ${C.rule}`, background: C.card, borderRadius: '14px',
+            padding: ehMobile ? '14px' : '16px 18px',
           }}>
             <h2 style={{
-              fontFamily: "'Bricolage Grotesque', sans-serif",
-              fontWeight: 700,
-              fontSize: '16px',
-              letterSpacing: '-0.01em',
-              margin: '0 0 3px',
+              fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
+              fontSize: '16px', letterSpacing: '-0.01em', margin: '0 0 3px',
             }}>
               Para onde foi em {MESES[mes].toLowerCase()}
             </h2>
-            <p style={{
-              fontSize: '12px',
-              color: C.soft,
-              margin: '0 0 14px',
-            }}>
-              Variáveis planejadas e gastos avulsos.
+            <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 14px' }}>
+              Ranking por categoria — contas variáveis e gastos avulsos somados.
             </p>
             {catsOrdenadas.length === 0 ? (
-              <p style={{
-                fontSize: '12px',
-                color: C.soft,
-                marginTop: '8px',
-                lineHeight: 1.6,
-              }}>
-                Nada lançado ainda. O primeiro gasto que você registrar aparece aqui.
+              <p style={{ fontSize: '12px', color: C.soft, lineHeight: 1.6 }}>
+                Nada lançado ainda. O primeiro gasto com categoria aparece aqui.
               </p>
             ) : (
-              catsOrdenadas.map(([c, v]) => (
+              catsOrdenadas.map(([c, v], idx) => (
                 <div key={c} style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr auto',
-                  gap: '10px',
-                  alignItems: 'center',
-                  padding: '7px 0',
-                  borderBottom: `1px solid #E4E8E0`,
+                  display: 'grid', gridTemplateColumns: '22px 1fr auto', gap: '10px',
+                  alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #E4E8E0',
                 }}>
-                  <div>
-                    <div style={{ fontSize: '13px' }}>{c}</div>
+                  <div style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px',
+                    fontWeight: 700, color: idx === 0 ? C.amber : C.soft,
+                  }}>
+                    {idx + 1}º
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', fontWeight: idx === 0 ? 600 : 400 }}>{c}</div>
                     <div style={{
-                      height: '5px',
-                      borderRadius: '3px',
-                      background: C.mid,
-                      marginTop: '5px',
-                      width: `${Math.max(4, (v / maxCat) * 100)}%`,
-                      opacity: 0.55,
+                      height: '5px', borderRadius: '3px', background: C.amber, marginTop: '5px',
+                      width: `${Math.max(4, (v / maxCat) * 100)}%`, opacity: idx === 0 ? 0.85 : 0.5,
                     }} />
                   </div>
-                  <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontVariantNumeric: 'tabular-nums',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                  }}>
-                    {brl(v)}
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '13px', fontWeight: 600,
+                    }}>
+                      {brl(v)}
+                    </div>
+                    <div style={{ fontSize: '10.5px', color: C.soft }}>
+                      {totalCats > 0 ? Math.round((v / totalCats) * 100) : 0}%
+                    </div>
                   </div>
                 </div>
               ))
@@ -1223,27 +823,16 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           </div>
 
           <div style={{
-            border: `1px solid ${C.rule}`,
-            background: C.card,
-            borderRadius: '14px',
-            padding: '16px 18px',
+            border: `1px solid ${C.rule}`, background: C.card, borderRadius: '14px',
+            padding: ehMobile ? '14px' : '16px 18px',
           }}>
             <h2 style={{
-              fontFamily: "'Bricolage Grotesque', sans-serif",
-              fontWeight: 700,
-              fontSize: '16px',
-              letterSpacing: '-0.01em',
-              margin: '0 0 3px',
+              fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
+              fontSize: '16px', letterSpacing: '-0.01em', margin: '0 0 3px',
             }}>
               Fechamento de cada mês
             </h2>
-            <p style={{
-              fontSize: '12px',
-              color: C.soft,
-              margin: '0 0 14px',
-            }}>
-              Saldo no último dia.
-            </p>
+            <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 14px' }}>Saldo no último dia.</p>
             {MESES.map((m, i) => {
               const x = calc.mesesInfo[i];
               const maxAno = Math.max(1, ...calc.mesesInfo.map((y) => Math.abs(y.fim)));
@@ -1252,32 +841,22 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   key={m}
                   onClick={() => setMes(i)}
                   style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr auto',
-                    gap: '10px',
-                    alignItems: 'center',
-                    padding: '7px 0',
-                    borderBottom: `1px solid #E4E8E0`,
-                    cursor: 'pointer',
+                    display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px', alignItems: 'center',
+                    padding: '7px 0', borderBottom: '1px solid #E4E8E0', cursor: 'pointer',
                     opacity: i < mesInicial ? 0.5 : 1,
                   }}
                 >
                   <div>
                     <div style={{ fontSize: '13px', fontWeight: i === mes ? 600 : 400 }}>{m}</div>
                     <div style={{
-                      height: '5px',
-                      borderRadius: '3px',
-                      background: x.fim < 0 ? C.rose : C.mid,
-                      marginTop: '5px',
+                      height: '5px', borderRadius: '3px',
+                      background: x.fim < 0 ? C.rose : C.mid, marginTop: '5px',
                       width: `${Math.max(3, (Math.abs(x.fim) / maxAno) * 100)}%`,
                     }} />
                   </div>
                   <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontVariantNumeric: 'tabular-nums',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    color: x.fim < 0 ? C.rose : C.ink,
+                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                    fontSize: '13px', fontWeight: 600, color: x.fim < 0 ? C.rose : C.ink,
                   }}>
                     {brl(x.fim)}
                   </div>
@@ -1291,47 +870,80 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   );
 }
 
-function TabelaItens({ itens, onNome, onDia, onValor, onDel }) {
+function Bloco({ cor, fundo, titulo, children }) {
+  return (
+    <div style={{
+      borderRadius: '12px', padding: '14px 16px 16px', marginTop: '16px',
+      background: fundo, borderTop: `4px solid ${cor}`,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '9px',
+        fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: '14.5px', fontWeight: 700,
+        letterSpacing: '-0.01em', marginBottom: '12px', color: cor,
+      }}>
+        <span style={{
+          width: '11px', height: '11px', borderRadius: '50%', background: cor,
+          boxShadow: '0 0 0 3px rgba(255,255,255,.5)', flex: 'none',
+        }} />
+        {titulo}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function BotaoAdd({ onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        border: '1px solid rgba(18,33,28,.18)', background: 'rgba(255,255,255,.55)',
+        color: C.ink, borderRadius: '9px', padding: '9px 14px',
+        fontSize: '13px', fontWeight: 500, cursor: 'pointer', marginTop: '10px',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Total({ label, valor, cor }) {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      marginTop: '10px', paddingTop: '10px', borderTop: '1px solid rgba(18,33,28,.14)',
+      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+      fontSize: '14px', fontWeight: 600,
+    }}>
+      <span>{label}</span>
+      <span style={{ color: cor }}>{valor}</span>
+    </div>
+  );
+}
+
+function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome, onDia, onValor, onCategoria, onDel }) {
   return (
     <>
       {itens.map((item) => (
-        <div key={item.id} style={{
-          padding: '10px 0',
-          borderBottom: `1px solid rgba(18,33,28,.08)`,
-        }}>
+        <div key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid rgba(18,33,28,.08)' }}>
           <input
             type="text"
             value={item.nome}
             onChange={(e) => onNome(item.id, e.target.value)}
-            placeholder="Nome (ex: Formatura Nalin)"
+            placeholder={exemploNome}
             style={{
-              display: 'block',
-              width: '100%',
-              border: 0,
-              background: 'transparent',
-              fontFamily: 'Inter, sans-serif',
-              fontSize: '14.5px',
-              fontWeight: 600,
-              color: 'var(--ink)',
-              padding: '4px 2px',
-              borderRadius: '6px',
-              marginBottom: '6px',
+              display: 'block', width: '100%', border: 0, background: 'transparent',
+              fontFamily: 'Inter, sans-serif', fontSize: '14.5px', fontWeight: 600,
+              color: C.ink, padding: '4px 2px', borderRadius: '6px', marginBottom: '6px',
             }}
             onFocus={(e) => e.target.style.background = 'rgba(255,255,255,.6)'}
             onBlur={(e) => e.target.style.background = 'transparent'}
           />
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: '9.5px',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              color: 'var(--soft)',
-              flex: 'none',
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+              letterSpacing: '0.08em', textTransform: 'uppercase', color: C.soft, flex: 'none',
             }}>
               Dia
             </span>
@@ -1339,15 +951,9 @@ function TabelaItens({ itens, onNome, onDia, onValor, onDel }) {
               value={item.dia}
               onChange={(e) => onDia(item.id, e.target.value)}
               style={{
-                border: `1px solid rgba(18,33,28,.16)`,
-                background: '#fff',
-                borderRadius: '8px',
-                padding: '8px 6px',
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: '12px',
-                color: 'var(--soft)',
-                width: '58px',
-                flex: 'none',
+                border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                padding: '8px 6px', fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px',
+                color: C.soft, width: '58px', flex: 'none',
               }}
             >
               {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
@@ -1359,48 +965,47 @@ function TabelaItens({ itens, onNome, onDia, onValor, onDel }) {
               value={item.valor}
               onChange={(e) => onValor(item.id, e.target.value)}
               style={{
-                border: `1px solid rgba(18,33,28,.16)`,
-                background: '#fff',
-                borderRadius: '8px',
-                padding: '8px 9px',
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontVariantNumeric: 'tabular-nums',
-                fontSize: '13px',
-                color: 'var(--ink)',
-                textAlign: 'right',
-                flex: '1 1 auto',
-                minWidth: 0,
+                border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                padding: '8px 9px', fontFamily: "'IBM Plex Mono', monospace",
+                fontVariantNumeric: 'tabular-nums', fontSize: '13px', color: C.ink,
+                textAlign: 'right', flex: '1 1 auto', minWidth: 0,
               }}
             />
             <button
               onClick={() => onDel(item.id)}
               aria-label={`Remover ${item.nome || 'linha'}`}
               style={{
-                border: `1px solid rgba(18,33,28,.16)`,
-                background: 'transparent',
-                borderRadius: '8px',
-                width: '32px',
-                height: '32px',
-                flex: 'none',
-                cursor: 'pointer',
-                color: 'var(--soft)',
-                fontSize: '15px',
-                lineHeight: 1,
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.background = 'var(--rosePale)';
-                e.target.style.color = 'var(--rose)';
-                e.target.style.borderColor = 'var(--rosePale)';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.background = 'transparent';
-                e.target.style.color = 'var(--soft)';
-                e.target.style.borderColor = 'rgba(18,33,28,.16)';
+                border: '1px solid rgba(18,33,28,.16)', background: 'transparent', borderRadius: '8px',
+                width: '32px', height: '32px', flex: 'none', cursor: 'pointer',
+                color: C.soft, fontSize: '15px', lineHeight: 1,
               }}
             >
               ×
             </button>
           </div>
+
+          {comCategoria && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+              <span style={{
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+                letterSpacing: '0.08em', textTransform: 'uppercase', color: C.soft, flex: 'none',
+              }}>
+                Categoria
+              </span>
+              <input
+                type="text"
+                list="cd-categorias"
+                value={item.categoria || ''}
+                onChange={(e) => onCategoria(item.id, e.target.value)}
+                placeholder="escolha ou crie uma"
+                style={{
+                  border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                  padding: '8px 9px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px',
+                  color: C.ink, flex: '1 1 auto', minWidth: 0,
+                }}
+              />
+            </div>
+          )}
         </div>
       ))}
     </>
