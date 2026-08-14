@@ -61,6 +61,17 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const [abrirPainel, setAbrirPainel] = useState(true);
   const [ehMobile, setEhMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 760 : false);
   const syncRef = useRef(null);
+  const trilhaRef = useRef(null);
+  const mesAtivoRef = useRef(null);
+
+  // deixa o mês selecionado visível na trilha, sem precisar arrastar
+  useEffect(() => {
+    if (!mesAtivoRef.current || !trilhaRef.current) return;
+    const trilha = trilhaRef.current;
+    const botao = mesAtivoRef.current;
+    const alvo = botao.offsetLeft - (trilha.clientWidth / 2) + (botao.clientWidth / 2);
+    trilha.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
+  }, [mes, carregando, ehMobile]);
 
   useEffect(() => {
     const aoRedimensionar = () => setEhMobile(window.innerWidth < 760);
@@ -149,12 +160,14 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       const abertura = saldo;
       const baseDia = total > 0 ? (ganhosTotal - fixosTotal) / total : 0;
       let variaveis = 0;
+      let entradasAvulsasMes = 0;
       const cats = {};
 
       for (let dia = 1; dia <= total; dia++) {
         const k = chaveDia(d.ano, m, dia);
         const reg = d.dias[k] || {};
         const avulso = num(reg.valor);
+        const entradaAvulsa = num(reg.entrada);
 
         const ent = d.rendas.reduce((s, r) => (Number(r.dia) === dia ? s + num(r.valor) : s), 0);
         const fix = d.fixos.reduce((s, f) => (Number(f.dia) === dia ? s + num(f.valor) : s), 0);
@@ -171,7 +184,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           }
         });
 
-        saldo = saldo + ent - fix - varPlanejada - avulso;
+        saldo = saldo + ent + entradaAvulsa - fix - varPlanejada - avulso;
         saldos[k] = saldo;
 
         if (avulso > 0) {
@@ -179,11 +192,12 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           cats[c] = (cats[c] || 0) + avulso;
         }
         variaveis += varPlanejada + avulso;
+        entradasAvulsasMes += entradaAvulsa;
       }
 
       mesesInfo.push({
-        abertura, ganhos: ganhosTotal, fixos: fixosTotal, baseDia, variaveis,
-        sobra: ganhosTotal - fixosTotal - variaveis,
+        abertura, ganhos: ganhosTotal + entradasAvulsasMes, fixos: fixosTotal, baseDia, variaveis,
+        sobra: ganhosTotal + entradasAvulsasMes - fixosTotal - variaveis,
         fim: saldo, cats, dias: total,
       });
     }
@@ -316,7 +330,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 0.95,
           margin: '6px 0 18px', fontSize: 'clamp(30px, 7vw, 52px)',
         }}>
-          Controle Financeiro
+          Vistta
         </h1>
 
         <div style={{
@@ -372,40 +386,78 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', marginBottom: '16px', paddingBottom: '6px' }}>
-          {MESES.map((m, i) => {
-            const v = calc.mesesInfo[i].fim;
-            const on = i === mes;
-            const desativado = i < mesInicial;
-            return (
-              <button
-                key={m}
-                onClick={() => setMes(i)}
-                style={{
-                  flex: '1 0 auto', minWidth: '62px',
-                  border: `1px solid ${on ? C.ink : C.rule}`,
-                  background: on ? C.ink : 'transparent',
-                  borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
-                  opacity: desativado && !on ? 0.45 : 1,
-                }}
-              >
-                <div style={{
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px',
-                  letterSpacing: '0.1em', textTransform: 'uppercase',
-                  color: on ? '#AFC0B7' : C.soft,
-                }}>
-                  {ABREV[i]}
-                </div>
-                <div style={{
-                  fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                  fontSize: '13px', fontWeight: 600, marginTop: '3px',
-                  color: on ? (v < 0 ? '#F0A9A3' : '#8FD9BE') : v < 0 ? C.rose : C.deep,
-                }}>
-                  {curto(v)}
-                </div>
-              </button>
-            );
-          })}
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: '8px', marginBottom: '6px',
+          }}>
+            <span style={{
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
+              letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
+            }}>
+              Meses do ano
+            </span>
+            <span style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              fontSize: '11px', color: C.soft,
+            }}>
+              arraste para ver todos
+              <span aria-hidden="true" style={{ fontSize: '13px', lineHeight: 1 }}>↔</span>
+            </span>
+          </div>
+
+          <div style={{ position: 'relative' }}>
+            <div
+              ref={trilhaRef}
+              style={{
+                display: 'flex', gap: '4px', overflowX: 'auto',
+                paddingBottom: '6px', paddingRight: '26px',
+                scrollbarWidth: 'thin',
+              }}
+            >
+              {MESES.map((m, i) => {
+                const v = calc.mesesInfo[i].fim;
+                const on = i === mes;
+                const desativado = i < mesInicial;
+                return (
+                  <button
+                    key={m}
+                    ref={on ? mesAtivoRef : null}
+                    onClick={() => setMes(i)}
+                    style={{
+                      flex: '1 0 auto', minWidth: '66px',
+                      border: `1px solid ${on ? C.ink : C.rule}`,
+                      background: on ? C.ink : 'transparent',
+                      borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
+                      opacity: desativado && !on ? 0.45 : 1,
+                    }}
+                  >
+                    <div style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px',
+                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                      color: on ? '#AFC0B7' : C.soft,
+                    }}>
+                      {ABREV[i]}
+                    </div>
+                    <div style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '13px', fontWeight: 600, marginTop: '3px',
+                      color: on ? (v < 0 ? '#F0A9A3' : '#8FD9BE') : v < 0 ? C.rose : C.deep,
+                    }}>
+                      {curto(v)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* desbotado na borda direita: mostra que tem mais conteúdo para o lado */}
+            <div aria-hidden="true" style={{
+              position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
+              background: `linear-gradient(to right, rgba(238,240,234,0), ${C.paper})`,
+              pointerEvents: 'none',
+            }} />
+          </div>
         </div>
 
         {aviso && (
@@ -578,78 +630,131 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           {MESES[mes]}
         </h2>
         <p style={{ fontSize: '12px', color: C.soft, marginBottom: '12px' }}>
-          Só o gasto avulso é seu para preencher — o resto entra sozinho.
+          Lance aqui o que foi avulso — entrada ou gasto que não se repete. O resto entra sozinho.
         </p>
 
         {ehMobile ? (
           <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
             {linhasDoMes.map((L) => {
               const cor = faixa(L.saldo);
-              const temAlgo = L.ents.length || L.fixs.length || L.vars.length || num(L.reg.valor) > 0;
+              const temAuto = L.ents.length || L.fixs.length || L.vars.length;
+              const temAvulso = num(L.reg.valor) > 0 || num(L.reg.entrada) > 0;
               return (
                 <div key={L.dia} style={{
+                  display: 'flex',
+                  alignItems: 'stretch',
+                  gap: '12px',
                   border: `1px solid ${L.ehHoje ? C.amber : C.rule}`,
-                  borderLeft: `4px solid ${L.ehHoje ? C.amber : temAlgo ? cor.barra : C.rule}`,
-                  background: C.card, borderRadius: '11px', padding: '12px 13px',
+                  background: C.card,
+                  borderRadius: '11px',
+                  padding: '12px 13px',
+                  overflow: 'hidden',
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
-                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
-                      <span style={{ fontSize: '17px', fontWeight: 700, color: L.fds ? C.soft : C.ink }}>
-                        {String(L.dia).padStart(2, '0')}
-                      </span>
-                      <span style={{
-                        fontSize: '10px', color: C.soft, marginLeft: '6px',
-                        textTransform: 'uppercase', letterSpacing: '0.08em',
-                      }}>
-                        {DIAS_SEM[L.sem]}{L.ehHoje ? ' · hoje' : ''}
-                      </span>
+                  {/* número do dia, grande, ocupando a altura toda do cartão */}
+                  <div style={{
+                    flex: 'none',
+                    width: '52px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    borderRight: `1px solid ${C.rule}`,
+                    paddingRight: '10px',
+                  }}>
+                    <div style={{
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontVariantNumeric: 'tabular-nums',
+                      fontSize: '34px',
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      letterSpacing: '-0.03em',
+                      color: L.ehHoje ? C.amber : L.fds ? C.soft : C.ink,
+                    }}>
+                      {String(L.dia).padStart(2, '0')}
                     </div>
                     <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                      fontSize: '14px', fontWeight: 700,
-                      background: cor.bg, color: cor.fg,
-                      padding: '4px 9px', borderRadius: '7px', whiteSpace: 'nowrap',
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: '9.5px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                      color: L.ehHoje ? C.amber : C.soft,
+                      marginTop: '4px',
                     }}>
-                      {brl(L.saldo)}
+                      {L.ehHoje ? 'hoje' : DIAS_SEM[L.sem]}
                     </div>
                   </div>
 
-                  {(L.ents.length > 0 || L.fixs.length > 0 || L.vars.length > 0) && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '9px' }}>
-                      {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
-                      {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
-                      {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                  {/* conteúdo do dia */}
+                  <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                    <div style={{
+                      display: 'flex', justifyContent: 'flex-end', marginBottom: temAuto ? '8px' : '10px',
+                    }}>
+                      <span style={{
+                        fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                        fontSize: '14px', fontWeight: 700,
+                        background: cor.bg, color: cor.fg,
+                        padding: '4px 9px', borderRadius: '7px', whiteSpace: 'nowrap',
+                      }}>
+                        {brl(L.saldo)}
+                      </span>
                     </div>
-                  )}
 
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'center' }}>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="Gasto avulso"
-                      value={L.reg.valor ?? ''}
-                      onChange={(e) => setDia(L.dia, 'valor', e.target.value)}
-                      style={{
-                        flex: '1 1 auto', minWidth: 0,
-                        border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
-                        padding: '9px 10px', fontFamily: "'IBM Plex Mono', monospace",
-                        fontVariantNumeric: 'tabular-nums', fontSize: '14px',
-                        color: num(L.reg.valor) > 0 ? C.rose : C.ink,
-                        fontWeight: num(L.reg.valor) > 0 ? 600 : 400,
-                        textAlign: 'right',
-                      }}
-                    />
-                    {num(L.reg.valor) > 0 && (
+                    {temAuto > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '10px' }}>
+                        {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
+                        {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                        {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="+ Entrada"
+                        aria-label={`Entrada avulsa no dia ${L.dia}`}
+                        value={L.reg.entrada ?? ''}
+                        onChange={(e) => setDia(L.dia, 'entrada', e.target.value)}
+                        style={{
+                          flex: '1 1 0', minWidth: 0,
+                          border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
+                          padding: '9px 9px', fontFamily: "'IBM Plex Mono', monospace",
+                          fontVariantNumeric: 'tabular-nums', fontSize: '13.5px',
+                          color: num(L.reg.entrada) > 0 ? C.deep : C.ink,
+                          fontWeight: num(L.reg.entrada) > 0 ? 600 : 400,
+                          textAlign: 'right',
+                        }}
+                      />
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="− Gasto"
+                        aria-label={`Gasto avulso no dia ${L.dia}`}
+                        value={L.reg.valor ?? ''}
+                        onChange={(e) => setDia(L.dia, 'valor', e.target.value)}
+                        style={{
+                          flex: '1 1 0', minWidth: 0,
+                          border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
+                          padding: '9px 9px', fontFamily: "'IBM Plex Mono', monospace",
+                          fontVariantNumeric: 'tabular-nums', fontSize: '13.5px',
+                          color: num(L.reg.valor) > 0 ? C.rose : C.ink,
+                          fontWeight: num(L.reg.valor) > 0 ? 600 : 400,
+                          textAlign: 'right',
+                        }}
+                      />
+                    </div>
+
+                    {temAvulso && (
                       <input
                         type="text"
                         list="cd-categorias"
-                        placeholder="Categoria"
+                        placeholder="Categoria (opcional)"
                         value={L.reg.categoria || ''}
                         onChange={(e) => setDia(L.dia, 'categoria', e.target.value)}
                         style={{
-                          flex: '1 1 auto', minWidth: 0,
+                          width: '100%', marginTop: '6px',
                           border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
-                          padding: '9px 10px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px', color: C.ink,
+                          padding: '8px 9px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px', color: C.ink,
                         }}
                       />
                     )}
@@ -664,10 +769,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             background: C.card, marginBottom: '18px',
           }}>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '600px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '680px' }}>
                 <thead>
                   <tr>
-                    {['Dia', 'Lançamentos automáticos', 'Gasto avulso', 'Categoria', 'Saldo'].map((h, i) => (
+                    {['Dia', 'Lançamentos automáticos', 'Entrada avulsa', 'Gasto avulso', 'Categoria', 'Saldo'].map((h, i) => (
                       <th key={h} style={{
                         fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
                         letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
@@ -682,6 +787,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 <tbody>
                   {linhasDoMes.map((L) => {
                     const cor = faixa(L.saldo);
+                    const temAvulso = num(L.reg.valor) > 0 || num(L.reg.entrada) > 0;
                     return (
                       <tr key={L.dia} style={{
                         background: L.fds ? 'rgba(18,33,28,0.02)' : 'transparent',
@@ -689,28 +795,52 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                       }}>
                         <td style={{
                           fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                          padding: '12px 10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left',
+                          padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left',
                         }}>
-                          <span style={{ fontSize: '14px', fontWeight: 600 }}>{String(L.dia).padStart(2, '0')}</span>
                           <span style={{
-                            fontSize: '10px', color: C.soft, marginLeft: '5px',
+                            fontSize: '19px', fontWeight: 700, letterSpacing: '-0.02em',
+                            color: L.ehHoje ? C.amber : L.fds ? C.soft : C.ink,
+                          }}>
+                            {String(L.dia).padStart(2, '0')}
+                          </span>
+                          <span style={{
+                            fontSize: '10px', color: C.soft, marginLeft: '6px',
                             textTransform: 'uppercase', letterSpacing: '0.06em',
                           }}>
                             {DIAS_SEM[L.sem]}
                           </span>
                         </td>
-                        <td style={{ padding: '12px 10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left' }}>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left' }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                             {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
                             {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
                             {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
                           </div>
                         </td>
-                        <td style={{ padding: '12px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
+                        <td style={{ padding: '10px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
                           <input
                             type="text"
                             inputMode="decimal"
                             placeholder="—"
+                            aria-label={`Entrada avulsa no dia ${L.dia}`}
+                            value={L.reg.entrada ?? ''}
+                            onChange={(e) => setDia(L.dia, 'entrada', e.target.value)}
+                            style={{
+                              width: '100%', border: 0, background: 'transparent', textAlign: 'right',
+                              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                              fontSize: '14px',
+                              color: num(L.reg.entrada) > 0 ? C.deep : C.ink,
+                              fontWeight: num(L.reg.entrada) > 0 ? 600 : 400,
+                              padding: '9px 8px', borderRadius: '7px',
+                            }}
+                          />
+                        </td>
+                        <td style={{ padding: '10px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="—"
+                            aria-label={`Gasto avulso no dia ${L.dia}`}
                             value={L.reg.valor ?? ''}
                             onChange={(e) => setDia(L.dia, 'valor', e.target.value)}
                             style={{
@@ -723,8 +853,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                             }}
                           />
                         </td>
-                        <td style={{ padding: '12px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
-                          {num(L.reg.valor) > 0 && (
+                        <td style={{ padding: '10px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
+                          {temAvulso && (
                             <input
                               type="text"
                               list="cd-categorias"

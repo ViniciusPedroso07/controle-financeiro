@@ -19,27 +19,28 @@ export default function TelaLogin({ onEntrar, carregando }) {
       fontFamily: 'system-ui'
     }}>
       <div style={{ maxWidth: '380px', width: '100%' }}>
-        <div style={{
-          fontFamily: "'Bricolage Grotesque', system-ui",
-          fontSize: 'clamp(32px, 6vw, 48px)',
-          fontWeight: 800,
-          letterSpacing: '-0.03em',
-          lineHeight: 0.92,
-          marginBottom: '8px',
-          color: 'var(--ink)'
-        }}>
-          Controle<br />Financeiro
+        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+          <div style={{
+            fontFamily: "'Bricolage Grotesque', system-ui",
+            fontSize: 'clamp(40px, 9vw, 60px)',
+            fontWeight: 800,
+            letterSpacing: '-0.035em',
+            lineHeight: 1,
+            color: 'var(--ink)'
+          }}>
+            Vistta
+          </div>
+          <div style={{
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: '12px',
+            letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            color: 'var(--soft)',
+            marginTop: '10px'
+          }}>
+            Controle Financeiro
+          </div>
         </div>
-
-        <p style={{
-          fontSize: '14px',
-          color: 'var(--soft)',
-          marginBottom: '32px',
-          lineHeight: 1.6
-        }}>
-          Compartilhado entre dispositivos em tempo real. Sincroniza automaticamente em
-          diferentes aparelhos — celular, tablet ou computador.
-        </p>
 
         <form onSubmit={handleSubmit}>
           <label style={{
