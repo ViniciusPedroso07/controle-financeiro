@@ -237,6 +237,16 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     }));
   const delLinha = (lista, id) => setD((p) => ({ ...p, [lista]: p[lista].filter((i) => i.id !== id) }));
 
+  const reordenar = (lista, de, para) => {
+    if (de === para) return;
+    setD((p) => {
+      const copia = [...p[lista]];
+      const [movido] = copia.splice(de, 1);
+      copia.splice(para, 0, movido);
+      return { ...p, [lista]: copia };
+    });
+  };
+
   const catsOrdenadas = Object.entries(r.cats).sort((a, b) => b[1] - a[1]);
   const maxCat = catsOrdenadas.length ? catsOrdenadas[0][1] : 1;
   const totalCats = catsOrdenadas.reduce((s, [, v]) => s + v, 0);
@@ -588,6 +598,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   onDia={(id, v) => setPadrao('rendas', id, 'dia', v)}
                   onValor={(id, v) => setPadrao('rendas', id, 'valor', v)}
                   onDel={(id) => delLinha('rendas', id)}
+                  onReordenar={(de, para) => reordenar('rendas', de, para)}
                 />
                 <BotaoAdd onClick={() => addLinha('rendas')}>+ Outra entrada</BotaoAdd>
                 <Total label="Total que entra" valor={brl(calc.mesesInfo[mesInicial]?.ganhos ?? 0)} cor={C.deep} />
@@ -601,6 +612,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   onDia={(id, v) => setPadrao('fixos', id, 'dia', v)}
                   onValor={(id, v) => setPadrao('fixos', id, 'valor', v)}
                   onDel={(id) => delLinha('fixos', id)}
+                  onReordenar={(de, para) => reordenar('fixos', de, para)}
                 />
                 <BotaoAdd onClick={() => addLinha('fixos')}>+ Outra conta fixa</BotaoAdd>
                 <Total label="Total de contas fixas" valor={brl(calc.mesesInfo[mesInicial]?.fixos ?? 0)} cor={C.steel} />
@@ -621,6 +633,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   onValor={(id, v) => setPadrao('contasVariaveis', id, 'valor', v)}
                   onCategoria={(id, v) => setPadrao('contasVariaveis', id, 'categoria', v)}
                   onDel={(id) => delLinha('contasVariaveis', id)}
+                  onReordenar={(de, para) => reordenar('contasVariaveis', de, para)}
                 />
                 <BotaoAdd onClick={() => addLinha('contasVariaveis')}>+ Outra conta variável</BotaoAdd>
                 <Total label="Total de contas variáveis" valor={brl(calc.variaveisTotalTipico)} cor={C.amber} />
@@ -1058,93 +1071,204 @@ function Total({ label, valor, cor }) {
   );
 }
 
-function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome, onDia, onValor, onCategoria, onDel }) {
+function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome, onDia, onValor, onCategoria, onDel, onReordenar }) {
+  const [arrasto, setArrasto] = useState(null); // { idx, deltaY, alvo, altura }
+  const refsLinhas = useRef([]);
+  const medidas = useRef([]);
+
+  const iniciarArrasto = (idx, e) => {
+    if (itens.length < 2) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+
+    medidas.current = refsLinhas.current.map((el) => {
+      if (!el) return { topo: 0, altura: 0, centro: 0 };
+      const r = el.getBoundingClientRect();
+      return { topo: r.top, altura: r.height, centro: r.top + r.height / 2 };
+    });
+
+    setArrasto({ idx, y0: e.clientY, deltaY: 0, alvo: idx, altura: medidas.current[idx]?.altura || 0 });
+  };
+
+  const moverArrasto = (e) => {
+    if (!arrasto) return;
+    const deltaY = e.clientY - arrasto.y0;
+    const centroAtual = (medidas.current[arrasto.idx]?.centro || 0) + deltaY;
+
+    let alvo = arrasto.idx;
+    medidas.current.forEach((m, i) => {
+      if (i === arrasto.idx) return;
+      if (i < arrasto.idx && centroAtual < m.centro) alvo = Math.min(alvo, i);
+      if (i > arrasto.idx && centroAtual > m.centro) alvo = Math.max(alvo, i);
+    });
+
+    setArrasto((p) => (p ? { ...p, deltaY, alvo } : p));
+  };
+
+  const soltarArrasto = () => {
+    if (!arrasto) return;
+    if (arrasto.alvo !== arrasto.idx) onReordenar?.(arrasto.idx, arrasto.alvo);
+    setArrasto(null);
+  };
+
+  const deslocamento = (i) => {
+    if (!arrasto) return 0;
+    const { idx, alvo, altura } = arrasto;
+    if (i === idx) return arrasto.deltaY;
+    if (idx < alvo && i > idx && i <= alvo) return -altura;
+    if (idx > alvo && i >= alvo && i < idx) return altura;
+    return 0;
+  };
+
   return (
     <>
-      {itens.map((item) => (
-        <div key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid rgba(18,33,28,.08)' }}>
-          <input
-            type="text"
-            value={item.nome}
-            onChange={(e) => onNome(item.id, e.target.value)}
-            placeholder={exemploNome}
+      {itens.map((item, i) => {
+        const arrastando = arrasto?.idx === i;
+        return (
+          <div
+            key={item.id}
+            ref={(el) => { refsLinhas.current[i] = el; }}
             style={{
-              display: 'block', width: '100%', border: 0, background: 'transparent',
-              fontFamily: 'Inter, sans-serif', fontSize: '14.5px', fontWeight: 600,
-              color: C.ink, padding: '4px 2px', borderRadius: '6px', marginBottom: '6px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '8px',
+              padding: '10px 0',
+              borderBottom: '1px solid rgba(18,33,28,.08)',
+              transform: `translateY(${deslocamento(i)}px)`,
+              transition: arrastando ? 'none' : 'transform .18s ease',
+              position: 'relative',
+              zIndex: arrastando ? 3 : 1,
+              background: arrastando ? 'rgba(255,255,255,.75)' : 'transparent',
+              borderRadius: arrastando ? '10px' : 0,
+              boxShadow: arrastando ? '0 6px 18px rgba(18,33,28,.16)' : 'none',
+              touchAction: arrasto ? 'none' : 'auto',
             }}
-            onFocus={(e) => e.target.style.background = 'rgba(255,255,255,.6)'}
-            onBlur={(e) => e.target.style.background = 'transparent'}
-          />
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
-              letterSpacing: '0.08em', textTransform: 'uppercase', color: C.soft, flex: 'none',
-            }}>
-              Dia
-            </span>
-            <select
-              value={item.dia}
-              onChange={(e) => onDia(item.id, e.target.value)}
-              style={{
-                border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
-                padding: '8px 6px', fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px',
-                color: C.soft, width: '58px', flex: 'none',
-              }}
-            >
-              {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
-            </select>
-            <input
-              type="text"
-              inputMode="decimal"
-              placeholder="0,00"
-              value={item.valor}
-              onChange={(e) => onValor(item.id, e.target.value)}
-              style={{
-                border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
-                padding: '8px 9px', fontFamily: "'IBM Plex Mono', monospace",
-                fontVariantNumeric: 'tabular-nums', fontSize: '13px', color: C.ink,
-                textAlign: 'right', flex: '1 1 auto', minWidth: 0,
-              }}
-            />
+          >
+            {/* alça de arrastar */}
             <button
-              onClick={() => onDel(item.id)}
-              aria-label={`Remover ${item.nome || 'linha'}`}
+              onPointerDown={(e) => iniciarArrasto(i, e)}
+              onPointerMove={moverArrasto}
+              onPointerUp={soltarArrasto}
+              onPointerCancel={soltarArrasto}
+              aria-label={`Arrastar ${item.nome || 'item'} para reordenar`}
+              title="Arraste para reordenar"
               style={{
-                border: '1px solid rgba(18,33,28,.16)', background: 'transparent', borderRadius: '8px',
-                width: '32px', height: '32px', flex: 'none', cursor: 'pointer',
-                color: C.soft, fontSize: '15px', lineHeight: 1,
+                flex: 'none',
+                width: '26px',
+                alignSelf: 'stretch',
+                minHeight: '38px',
+                border: 0,
+                background: 'transparent',
+                color: itens.length < 2 ? 'rgba(99,115,108,.3)' : C.soft,
+                cursor: itens.length < 2 ? 'default' : 'grab',
+                touchAction: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '15px',
+                lineHeight: 1,
+                letterSpacing: '-2px',
+                padding: 0,
               }}
             >
-              ×
+              ⠿
             </button>
-          </div>
 
-          {comCategoria && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-              <span style={{
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
-                letterSpacing: '0.08em', textTransform: 'uppercase', color: C.soft, flex: 'none',
-              }}>
-                Categoria
-              </span>
+            <div style={{ flex: '1 1 auto', minWidth: 0 }}>
               <input
                 type="text"
-                list="cd-categorias"
-                value={item.categoria || ''}
-                onChange={(e) => onCategoria(item.id, e.target.value)}
-                placeholder="escolha ou crie uma"
+                value={item.nome}
+                onChange={(e) => onNome(item.id, e.target.value)}
+                placeholder={exemploNome}
                 style={{
-                  border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
-                  padding: '8px 9px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px',
-                  color: C.ink, flex: '1 1 auto', minWidth: 0,
+                  display: 'block', width: '100%', border: 0, background: 'transparent',
+                  fontFamily: 'Inter, sans-serif', fontSize: '14.5px', fontWeight: 600,
+                  color: C.ink, padding: '4px 2px', borderRadius: '6px', marginBottom: '6px',
                 }}
+                onFocus={(e) => e.target.style.background = 'rgba(255,255,255,.6)'}
+                onBlur={(e) => e.target.style.background = 'transparent'}
               />
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+                  letterSpacing: '0.08em', textTransform: 'uppercase', color: C.soft, flex: 'none',
+                }}>
+                  Dia
+                </span>
+                <select
+                  value={item.dia}
+                  onChange={(e) => onDia(item.id, e.target.value)}
+                  style={{
+                    border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                    padding: '8px 6px', fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px',
+                    color: C.soft, width: '58px', flex: 'none',
+                  }}
+                >
+                  {Array.from({ length: 31 }, (_, n) => <option key={n + 1} value={n + 1}>{n + 1}</option>)}
+                </select>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={item.valor}
+                  onChange={(e) => onValor(item.id, e.target.value)}
+                  style={{
+                    border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                    padding: '8px 9px', fontFamily: "'IBM Plex Mono', monospace",
+                    fontVariantNumeric: 'tabular-nums', fontSize: '13px', color: C.ink,
+                    textAlign: 'right', flex: '1 1 auto', minWidth: 0,
+                  }}
+                />
+                <button
+                  onClick={() => onDel(item.id)}
+                  aria-label={`Remover ${item.nome || 'linha'}`}
+                  style={{
+                    border: '1px solid rgba(18,33,28,.16)', background: 'transparent', borderRadius: '8px',
+                    width: '32px', height: '32px', flex: 'none', cursor: 'pointer',
+                    color: C.soft, fontSize: '15px', lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {comCategoria && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+                  <span style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+                    letterSpacing: '0.08em', textTransform: 'uppercase', color: C.soft, flex: 'none',
+                  }}>
+                    Categoria
+                  </span>
+                  <input
+                    type="text"
+                    list="cd-categorias"
+                    value={item.categoria || ''}
+                    onChange={(e) => onCategoria(item.id, e.target.value)}
+                    placeholder="escolha ou crie uma"
+                    style={{
+                      border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                      padding: '8px 9px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px',
+                      color: C.ink, flex: '1 1 auto', minWidth: 0,
+                    }}
+                  />
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      ))}
+          </div>
+        );
+      })}
+
+      {itens.length > 1 && (
+        <p style={{
+          fontSize: '11px', color: C.soft, marginTop: '10px', marginBottom: 0,
+          display: 'flex', alignItems: 'center', gap: '6px',
+        }}>
+          <span aria-hidden="true" style={{ letterSpacing: '-2px' }}>⠿</span>
+          segure e arraste para mudar a ordem
+        </p>
+      )}
     </>
   );
 }
