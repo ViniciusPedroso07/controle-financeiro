@@ -542,19 +542,29 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
 
   return (
     <div style={{
-      background: T.paper, color: C.ink, minHeight: '100vh',
+      background: T.paper, color: C.ink, minHeight: '100dvh',
       fontFamily: 'Inter, system-ui, sans-serif',
-      padding: ehMobile ? '14px 12px 92px' : '20px 16px 56px',
+      padding: ehMobile ? '0 12px 24px' : '20px 16px 56px',
       WebkitFontSmoothing: 'antialiased',
       transition: 'background .25s ease',
+      overflowX: 'hidden',
+      width: '100%',
     }}>
       <style>{`
+        html, body { overflow-x: hidden; width: 100%; overscroll-behavior-x: none; }
         * { box-sizing: border-box; }
         input, select, button { font-family: inherit; }
       `}</style>
 
-      <div style={{ maxWidth: '1180px', margin: '0 auto' }}>
-
+      <div style={{
+        position: ehMobile ? 'sticky' : 'static',
+        top: 0, zIndex: 25,
+        background: T.paper,
+        margin: ehMobile ? '0 -12px' : 0,
+        padding: ehMobile ? '14px 12px 10px' : 0,
+        transition: 'background .25s ease',
+      }}>
+        <div style={{ maxWidth: '1180px', margin: '0 auto' }}>
         {/* ───── cabeçalho ───── */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
@@ -592,7 +602,10 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
             </button>
           </div>
         </div>
+        </div>
+      </div>
 
+      <div style={{ maxWidth: '1180px', margin: '0 auto' }}>
         {mostrarFamilia && (
           <PainelFamilia supabase={supabase} onFechar={() => setMostrarFamilia(false)} tema={T} />
         )}
@@ -1260,13 +1273,17 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
         </datalist>
       </div>
 
-      {/* ───── abas fixas no rodapé, no celular ───── */}
+      {/* ───── abas fixas no rodapé, no celular ─────
+          "sticky" em vez de "fixed": no Safari do iPhone, uma barra "fixed"
+          pula quando a barra de endereço aparece/some ao rolar. Com "sticky"
+          dentro do fluxo normal da página, ela fica firme, sem dançar. ───── */}
       {ehMobile && (
         <nav style={{
-          position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20,
+          position: 'sticky', left: 0, right: 0, bottom: 0, zIndex: 20,
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
           background: T.card, borderTop: `1px solid ${T.rule}`,
           paddingBottom: 'env(safe-area-inset-bottom)',
+          margin: '18px -12px 0',
         }}>
           {ABAS.map((a) => {
             const ativa = aba === a.id;
