@@ -50,6 +50,25 @@ const curto = (n) => {
   return n.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
 };
 
+// Converte o formato antigo (um gasto + uma entrada por dia) para lista de lançamentos.
+// Roda ao carregar, então os dados que já existem continuam valendo.
+const normalizarDias = (dias = {}) => {
+  const saida = {};
+  Object.entries(dias).forEach(([k, reg]) => {
+    if (!reg) return;
+    if (Array.isArray(reg.lancamentos)) { saida[k] = reg; return; }
+    const lista = [];
+    if (num(reg.entrada) > 0) {
+      lista.push({ id: `${k}-e`, tipo: 'entrada', valor: reg.entrada, categoria: '' });
+    }
+    if (num(reg.valor) > 0) {
+      lista.push({ id: `${k}-s`, tipo: 'saida', valor: reg.valor, categoria: reg.categoria || '' });
+    }
+    if (lista.length) saida[k] = { lancamentos: lista };
+  });
+  return saida;
+};
+
 const diasNoMes = (ano, mes) => new Date(ano, mes + 1, 0).getDate();
 const chaveDia = (ano, mes, dia) => `${ano}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
 
@@ -92,7 +111,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         if (error) throw error;
 
         if (data && data.data && Object.keys(data.data).length > 0) {
-          setD({ ...PADRAO, ...data.data });
+          const vindo = data.data;
+          setD({ ...PADRAO, ...vindo, dias: normalizarDias(vindo.dias) });
         }
       } catch (err) {
         console.error('Erro ao carregar:', err);
@@ -127,7 +147,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'families', filter: `code=eq.${familyCode}` },
         (payload) => {
-          if (payload.new && payload.new.data) setD(payload.new.data);
+          if (payload.new && payload.new.data) {
+            const vindo = payload.new.data;
+            setD({ ...PADRAO, ...vindo, dias: normalizarDias(vindo.dias) });
+          }
         }
       )
       .subscribe();
@@ -166,8 +189,15 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       for (let dia = 1; dia <= total; dia++) {
         const k = chaveDia(d.ano, m, dia);
         const reg = d.dias[k] || {};
-        const avulso = num(reg.valor);
-        const entradaAvulsa = num(reg.entrada);
+        const lancs = Array.isArray(reg.lancamentos) ? reg.lancamentos : [];
+        let avulso = 0;
+        let entradaAvulsa = 0;
+        lancs.forEach((l) => {
+          const v = num(l.valor);
+          if (v <= 0) return;
+          if (l.tipo === 'entrada') entradaAvulsa += v;
+          else avulso += v;
+        });
 
         const ent = d.rendas.reduce((s, r) => (Number(r.dia) === dia ? s + num(r.valor) : s), 0);
         const fix = d.fixos.reduce((s, f) => (Number(f.dia) === dia ? s + num(f.valor) : s), 0);
@@ -187,10 +217,12 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         saldo = saldo + ent + entradaAvulsa - fix - varPlanejada - avulso;
         saldos[k] = saldo;
 
-        if (avulso > 0) {
-          const c = (reg.categoria && reg.categoria.trim()) || 'Sem categoria';
-          cats[c] = (cats[c] || 0) + avulso;
-        }
+        lancs.forEach((l) => {
+          const v = num(l.valor);
+          if (v <= 0 || l.tipo === 'entrada') return;
+          const c = (l.categoria && l.categoria.trim()) || 'Sem categoria';
+          cats[c] = (cats[c] || 0) + v;
+        });
         variaveis += varPlanejada + avulso;
         entradasAvulsasMes += entradaAvulsa;
       }
@@ -214,7 +246,9 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const categoriasUsadas = useMemo(() => {
     const usadas = new Set();
     d.contasVariaveis.forEach((v) => { if (v.categoria && v.categoria.trim()) usadas.add(v.categoria.trim()); });
-    Object.values(d.dias).forEach((reg) => { if (reg?.categoria && reg.categoria.trim()) usadas.add(reg.categoria.trim()); });
+    Object.values(d.dias).forEach((reg) => {
+      (reg?.lancamentos || []).forEach((l) => { if (l.categoria && l.categoria.trim()) usadas.add(l.categoria.trim()); });
+    });
     CAT_SUGESTOES.forEach((c) => usadas.add(c));
     return Array.from(usadas);
   }, [d]);
@@ -222,9 +256,39 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const setPadrao = (lista, id, campo, valor) =>
     setD((p) => ({ ...p, [lista]: p[lista].map((i) => (i.id === id ? { ...i, [campo]: valor } : i)) }));
 
-  const setDia = (dia, campo, valor) => {
+  const listaDoDia = (p, k) => (Array.isArray(p.dias[k]?.lancamentos) ? p.dias[k].lancamentos : []);
+
+  const addLancamento = (dia, tipo = 'saida') => {
     const k = chaveDia(d.ano, mes, dia);
-    setD((p) => ({ ...p, dias: { ...p.dias, [k]: { ...(p.dias[k] || {}), [campo]: valor } } }));
+    setD((p) => ({
+      ...p,
+      dias: {
+        ...p.dias,
+        [k]: { lancamentos: [...listaDoDia(p, k), { id: `l${Date.now()}${Math.random().toString(36).slice(2, 6)}`, tipo, valor: '', categoria: '' }] },
+      },
+    }));
+  };
+
+  const setLancamento = (dia, id, campo, valor) => {
+    const k = chaveDia(d.ano, mes, dia);
+    setD((p) => ({
+      ...p,
+      dias: {
+        ...p.dias,
+        [k]: { lancamentos: listaDoDia(p, k).map((l) => (l.id === id ? { ...l, [campo]: valor } : l)) },
+      },
+    }));
+  };
+
+  const delLancamento = (dia, id) => {
+    const k = chaveDia(d.ano, mes, dia);
+    setD((p) => {
+      const restante = listaDoDia(p, k).filter((l) => l.id !== id);
+      const dias = { ...p.dias };
+      if (restante.length) dias[k] = { lancamentos: restante };
+      else delete dias[k];
+      return { ...p, dias };
+    });
   };
 
   const addLinha = (lista) =>
@@ -272,8 +336,11 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     const k = chaveDia(d.ano, mes, dia);
     const reg = d.dias[k] || {};
     const sem = new Date(d.ano, mes, dia).getDay();
+    const lancs = Array.isArray(reg.lancamentos) ? reg.lancamentos : [];
     return {
-      dia, k, reg,
+      dia, k, reg, lancs,
+      totalEntradas: lancs.reduce((t, l) => t + (l.tipo === 'entrada' ? num(l.valor) : 0), 0),
+      totalSaidas: lancs.reduce((t, l) => t + (l.tipo !== 'entrada' ? num(l.valor) : 0), 0),
       saldo: calc.saldos[k] || 0,
       sem,
       fds: sem === 0 || sem === 6,
@@ -650,7 +717,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           {MESES[mes]}
         </h2>
         <p style={{ fontSize: '12px', color: C.soft, marginBottom: '12px' }}>
-          Lance aqui o que foi avulso — entrada ou gasto que não se repete. O resto entra sozinho.
+          Adicione quantos lançamentos quiser em cada dia. O resto entra sozinho.
         </p>
 
         {ehMobile ? (
@@ -658,7 +725,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             {linhasDoMes.map((L) => {
               const cor = faixa(L.saldo);
               const temAuto = L.ents.length || L.fixs.length || L.vars.length;
-              const temAvulso = num(L.reg.valor) > 0 || num(L.reg.entrada) > 0;
               return (
                 <div key={L.dia} style={{
                   display: 'flex',
@@ -668,9 +734,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   background: C.card,
                   borderRadius: '11px',
                   padding: '12px 13px',
-                  overflow: 'hidden',
                 }}>
-                  {/* número do dia, grande, ocupando a altura toda do cartão */}
                   <div style={{
                     flex: 'none',
                     width: '42px',
@@ -704,11 +768,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                     </div>
                   </div>
 
-                  {/* conteúdo do dia */}
                   <div style={{ flex: '1 1 auto', minWidth: 0 }}>
-                    <div style={{
-                      display: 'flex', justifyContent: 'flex-end', marginBottom: temAuto ? '8px' : '10px',
-                    }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: temAuto ? '8px' : '6px' }}>
                       <span style={{
                         fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
                         fontSize: '14px', fontWeight: 700,
@@ -720,64 +781,19 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                     </div>
 
                     {temAuto > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
                         {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
                         {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
                         {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
                       </div>
                     )}
 
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="+ Entrada"
-                        aria-label={`Entrada avulsa no dia ${L.dia}`}
-                        value={L.reg.entrada ?? ''}
-                        onChange={(e) => setDia(L.dia, 'entrada', e.target.value)}
-                        style={{
-                          flex: '1 1 0', minWidth: 0,
-                          border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
-                          padding: '9px 9px', fontFamily: "'IBM Plex Mono', monospace",
-                          fontVariantNumeric: 'tabular-nums', fontSize: '13.5px',
-                          color: num(L.reg.entrada) > 0 ? C.deep : C.ink,
-                          fontWeight: num(L.reg.entrada) > 0 ? 600 : 400,
-                          textAlign: 'right',
-                        }}
-                      />
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="− Gasto"
-                        aria-label={`Gasto avulso no dia ${L.dia}`}
-                        value={L.reg.valor ?? ''}
-                        onChange={(e) => setDia(L.dia, 'valor', e.target.value)}
-                        style={{
-                          flex: '1 1 0', minWidth: 0,
-                          border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
-                          padding: '9px 9px', fontFamily: "'IBM Plex Mono', monospace",
-                          fontVariantNumeric: 'tabular-nums', fontSize: '13.5px',
-                          color: num(L.reg.valor) > 0 ? C.rose : C.ink,
-                          fontWeight: num(L.reg.valor) > 0 ? 600 : 400,
-                          textAlign: 'right',
-                        }}
-                      />
-                    </div>
-
-                    {temAvulso && (
-                      <input
-                        type="text"
-                        list="cd-categorias"
-                        placeholder="Categoria (opcional)"
-                        value={L.reg.categoria || ''}
-                        onChange={(e) => setDia(L.dia, 'categoria', e.target.value)}
-                        style={{
-                          width: '100%', marginTop: '6px',
-                          border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '8px',
-                          padding: '8px 9px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px', color: C.ink,
-                        }}
-                      />
-                    )}
+                    <Lancamentos
+                      lancs={L.lancs}
+                      onCampo={(id, campo, v) => setLancamento(L.dia, id, campo, v)}
+                      onDel={(id) => delLancamento(L.dia, id)}
+                      onAdd={(tipo) => addLancamento(L.dia, tipo)}
+                    />
                   </div>
                 </div>
               );
@@ -792,12 +808,13 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '680px' }}>
                 <thead>
                   <tr>
-                    {['Dia', 'Lançamentos automáticos', 'Entrada avulsa', 'Gasto avulso', 'Categoria', 'Saldo'].map((h, i) => (
+                    {['Dia', 'Lançamentos automáticos', 'Lançamentos do dia', 'Saldo'].map((h, i) => (
                       <th key={h} style={{
                         fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
                         letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
-                        fontWeight: 500, textAlign: i < 2 ? 'left' : 'right',
+                        fontWeight: 500, textAlign: i === 3 ? 'right' : 'left',
                         padding: '11px 10px', background: '#E7EAE2', borderBottom: `1px solid ${C.rule}`,
+                        width: i === 2 ? '340px' : undefined,
                       }}>
                         {h}
                       </th>
@@ -807,7 +824,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 <tbody>
                   {linhasDoMes.map((L) => {
                     const cor = faixa(L.saldo);
-                    const temAvulso = num(L.reg.valor) > 0 || num(L.reg.entrada) > 0;
                     return (
                       <tr key={L.dia} style={{
                         background: L.fds ? 'rgba(18,33,28,0.02)' : 'transparent',
@@ -815,7 +831,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                       }}>
                         <td style={{
                           fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                          padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left',
+                          padding: '10px', borderBottom: '1px solid #E2E6DE',
+                          textAlign: 'left', verticalAlign: 'top', whiteSpace: 'nowrap',
                         }}>
                           <span style={{
                             fontSize: '14px', fontWeight: 600,
@@ -830,70 +847,26 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                             {DIAS_SEM[L.sem]}
                           </span>
                         </td>
-                        <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left' }}>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left', verticalAlign: 'top' }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                             {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
                             {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
                             {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
                           </div>
                         </td>
-                        <td style={{ padding: '10px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="—"
-                            aria-label={`Entrada avulsa no dia ${L.dia}`}
-                            value={L.reg.entrada ?? ''}
-                            onChange={(e) => setDia(L.dia, 'entrada', e.target.value)}
-                            style={{
-                              width: '100%', border: 0, background: 'transparent', textAlign: 'right',
-                              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                              fontSize: '14px',
-                              color: num(L.reg.entrada) > 0 ? C.deep : C.ink,
-                              fontWeight: num(L.reg.entrada) > 0 ? 600 : 400,
-                              padding: '9px 8px', borderRadius: '7px',
-                            }}
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid #E2E6DE', verticalAlign: 'top' }}>
+                          <Lancamentos
+                            lancs={L.lancs}
+                            onCampo={(id, campo, v) => setLancamento(L.dia, id, campo, v)}
+                            onDel={(id) => delLancamento(L.dia, id)}
+                            onAdd={(tipo) => addLancamento(L.dia, tipo)}
                           />
-                        </td>
-                        <td style={{ padding: '10px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="—"
-                            aria-label={`Gasto avulso no dia ${L.dia}`}
-                            value={L.reg.valor ?? ''}
-                            onChange={(e) => setDia(L.dia, 'valor', e.target.value)}
-                            style={{
-                              width: '100%', border: 0, background: 'transparent', textAlign: 'right',
-                              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                              fontSize: '14px',
-                              color: num(L.reg.valor) > 0 ? C.rose : C.ink,
-                              fontWeight: num(L.reg.valor) > 0 ? 600 : 400,
-                              padding: '9px 8px', borderRadius: '7px',
-                            }}
-                          />
-                        </td>
-                        <td style={{ padding: '10px 6px', borderBottom: '1px solid #E2E6DE', textAlign: 'right' }}>
-                          {temAvulso && (
-                            <input
-                              type="text"
-                              list="cd-categorias"
-                              placeholder="Categoria"
-                              value={L.reg.categoria || ''}
-                              onChange={(e) => setDia(L.dia, 'categoria', e.target.value)}
-                              style={{
-                                width: '100%', border: `1px dashed ${C.rule}`, background: 'transparent',
-                                borderRadius: '7px', fontFamily: 'Inter, sans-serif', fontSize: '11.5px',
-                                color: C.ink, padding: '6px 7px',
-                              }}
-                            />
-                          )}
                         </td>
                         <td style={{
                           textAlign: 'right', fontFamily: "'IBM Plex Mono', monospace",
                           fontVariantNumeric: 'tabular-nums', fontSize: '14px', fontWeight: 600,
-                          padding: '0 14px 0 10px', borderBottom: '1px solid #E2E6DE',
-                          background: cor.bg, color: cor.fg, whiteSpace: 'nowrap',
+                          padding: '10px 14px', borderBottom: '1px solid #E2E6DE',
+                          background: cor.bg, color: cor.fg, whiteSpace: 'nowrap', verticalAlign: 'top',
                         }}>
                           {brl(L.saldo)}
                         </td>
@@ -1270,5 +1243,115 @@ function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome
         </p>
       )}
     </>
+  );
+}
+
+// Lançamentos avulsos de um dia. Dia vazio mostra só um botão discreto —
+// os campos aparecem conforme a pessoa adiciona, para o calendário não ficar carregado.
+function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
+  if (!lancs.length) {
+    return (
+      <button
+        onClick={() => onAdd('saida')}
+        style={{
+          border: 0, background: 'transparent', color: C.soft,
+          fontSize: '12px', fontFamily: 'Inter, sans-serif',
+          cursor: 'pointer', padding: '5px 0', display: 'flex', alignItems: 'center', gap: '5px',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = C.ink; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = C.soft; }}
+      >
+        <span style={{ fontSize: '14px', lineHeight: 1 }}>+</span> lançamento
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: '6px' }}>
+      {lancs.map((l) => {
+        const ehEntrada = l.tipo === 'entrada';
+        const cor = ehEntrada ? C.deep : C.rose;
+        return (
+          <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            {/* alterna entre entrada e saída */}
+            <button
+              onClick={() => onCampo(l.id, 'tipo', ehEntrada ? 'saida' : 'entrada')}
+              title={ehEntrada ? 'Entrada — toque para virar saída' : 'Saída — toque para virar entrada'}
+              aria-label={ehEntrada ? 'Entrada' : 'Saída'}
+              style={{
+                flex: 'none', width: '26px', height: '32px',
+                border: `1px solid ${ehEntrada ? C.pale : C.rosePale}`,
+                background: ehEntrada ? C.pale : C.rosePale,
+                color: cor, borderRadius: '7px',
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: '14px', fontWeight: 700,
+                cursor: 'pointer', lineHeight: 1, padding: 0,
+              }}
+            >
+              {ehEntrada ? '+' : '−'}
+            </button>
+
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="0,00"
+              aria-label="Valor"
+              value={l.valor}
+              onChange={(e) => onCampo(l.id, 'valor', e.target.value)}
+              style={{
+                flex: '0 1 86px', minWidth: 0,
+                border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '7px',
+                padding: '7px 8px', fontFamily: "'IBM Plex Mono', monospace",
+                fontVariantNumeric: 'tabular-nums', fontSize: '13px',
+                color: num(l.valor) > 0 ? cor : C.ink,
+                fontWeight: num(l.valor) > 0 ? 600 : 400,
+                textAlign: 'right',
+              }}
+            />
+
+            <input
+              type="text"
+              list="cd-categorias"
+              placeholder={ehEntrada ? 'de onde veio' : 'categoria'}
+              aria-label="Categoria"
+              value={l.categoria || ''}
+              onChange={(e) => onCampo(l.id, 'categoria', e.target.value)}
+              style={{
+                flex: '1 1 auto', minWidth: 0,
+                border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '7px',
+                padding: '7px 8px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px', color: C.ink,
+              }}
+            />
+
+            <button
+              onClick={() => onDel(l.id)}
+              aria-label="Remover lançamento"
+              style={{
+                flex: 'none', width: '26px', height: '32px',
+                border: 0, background: 'transparent', color: C.soft,
+                fontSize: '15px', lineHeight: 1, cursor: 'pointer', padding: 0, borderRadius: '7px',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = C.rosePale; e.currentTarget.style.color = C.rose; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = C.soft; }}
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+
+      <button
+        onClick={() => onAdd('saida')}
+        style={{
+          justifySelf: 'start',
+          border: 0, background: 'transparent', color: C.soft,
+          fontSize: '12px', fontFamily: 'Inter, sans-serif',
+          cursor: 'pointer', padding: '2px 0', display: 'flex', alignItems: 'center', gap: '5px',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = C.ink; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = C.soft; }}
+      >
+        <span style={{ fontSize: '14px', lineHeight: 1 }}>+</span> outro
+      </button>
+    </div>
   );
 }
