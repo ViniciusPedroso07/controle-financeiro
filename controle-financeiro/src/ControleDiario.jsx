@@ -13,6 +13,7 @@ const C = {
   rosePale: '#F0D6D2',
   amber: '#B4832A',
   steel: '#48607A',
+  clay: '#8C5A3C',
 };
 
 const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
@@ -25,12 +26,14 @@ const CAT_SUGESTOES = ["Cartão de crédito","Mercado","Comer fora","Transporte"
 const RENDAS_INICIAIS = [{ id: "r1", nome: "", dia: 5, valor: "" }];
 const FIXOS_INICIAIS = [{ id: "f1", nome: "", dia: 10, valor: "" }];
 const VARIAVEIS_INICIAIS = [{ id: "v1", nome: "", dia: 10, valor: "", categoria: "" }];
+const PARCELAS_INICIAIS = [];
 
 const PADRAO = {
   ano: new Date().getFullYear(),
   rendas: RENDAS_INICIAIS,
   fixos: FIXOS_INICIAIS,
   contasVariaveis: VARIAVEIS_INICIAIS,
+  parcelas: PARCELAS_INICIAIS,
   dias: {},
 };
 
@@ -89,6 +92,16 @@ const origemDoValor = (item, mes) => {
   }
   return { proprio: false, de: null };
 };
+
+// Uma parcela vale do mês da compra até completar a quantidade contratada.
+// Diferente das contas, ela não herda valor: tem começo e fim definidos.
+const parcelaAtiva = (p, mes) => {
+  const ini = Number(p.mesInicio ?? 0);
+  const qtd = Number(p.quantidade || 0);
+  return qtd > 0 && mes >= ini && mes < ini + qtd;
+};
+const numeroDaParcela = (p, mes) => mes - Number(p.mesInicio ?? 0) + 1;
+const parcelasDoMes = (parcelas = [], mes) => parcelas.filter((p) => parcelaAtiva(p, mes) && num(p.valor) > 0);
 
 const diasNoMes = (ano, mes) => new Date(ano, mes + 1, 0).getDate();
 const chaveDia = (ano, mes, dia) => `${ano}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
@@ -194,6 +207,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       });
     });
 
+    (d.parcelas || []).forEach((p) => {
+      if (num(p.valor) > 0 && Number(p.quantidade) > 0) considerar(Number(p.mesInicio ?? 0));
+    });
+
     Object.entries(d.dias || {}).forEach(([k, reg]) => {
       const temValor = (reg?.lancamentos || []).some((l) => num(l.valor) > 0);
       if (!temValor) return;
@@ -224,14 +241,17 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
       if (antes) {
         for (let dia = 1; dia <= total; dia++) saldos[chaveDia(d.ano, m, dia)] = 0;
-        mesesInfo.push({ abertura: 0, ganhos: 0, fixos: 0, baseDia: 0, variaveis: 0, sobra: 0, fim: 0, cats: {}, dias: total });
+        mesesInfo.push({ abertura: 0, ganhos: 0, fixos: 0, baseDia: 0, variaveis: 0, parcelas: 0, sobra: 0, fim: 0, cats: {}, dias: total });
         continue;
       }
 
       const abertura = saldo;
       const ganhosTotal = d.rendas.reduce((acc, r) => acc + num(valorNoMes(r, m)), 0);
       const fixosTotal = d.fixos.reduce((acc, f) => acc + num(valorNoMes(f, m)), 0);
-      const baseDia = total > 0 ? (ganhosTotal - fixosTotal) / total : 0;
+      const ativasNoMes = parcelasDoMes(d.parcelas, m);
+      const parcelasTotal = ativasNoMes.reduce((acc, p) => acc + num(p.valor), 0);
+      // parcela é dinheiro já comprometido, então entra na base diária como conta fixa
+      const baseDia = total > 0 ? (ganhosTotal - fixosTotal - parcelasTotal) / total : 0;
       let variaveis = 0;
       let entradasAvulsasMes = 0;
       const cats = {};
@@ -251,6 +271,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
         const ent = d.rendas.reduce((acc, r) => (Number(r.dia) === dia ? acc + num(valorNoMes(r, m)) : acc), 0);
         const fix = d.fixos.reduce((acc, f) => (Number(f.dia) === dia ? acc + num(valorNoMes(f, m)) : acc), 0);
+        const par = ativasNoMes.reduce((acc, p) => (Number(p.dia) === dia ? acc + num(p.valor) : acc), 0);
 
         let varPlanejada = 0;
         d.contasVariaveis.forEach((x) => {
@@ -264,7 +285,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           }
         });
 
-        saldo = saldo + ent + entradaAvulsa - fix - varPlanejada - avulso;
+        saldo = saldo + ent + entradaAvulsa - fix - par - varPlanejada - avulso;
         saldos[k] = saldo;
 
         lancs.forEach((l) => {
@@ -279,7 +300,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
       mesesInfo.push({
         abertura, ganhos: ganhosTotal + entradasAvulsasMes, fixos: fixosTotal, baseDia, variaveis,
-        sobra: ganhosTotal + entradasAvulsasMes - fixosTotal - variaveis,
+        parcelas: parcelasTotal,
+        sobra: ganhosTotal + entradasAvulsasMes - fixosTotal - parcelasTotal - variaveis,
         fim: saldo, cats, dias: total,
         variaveisPlanejadas: d.contasVariaveis.reduce((acc, v) => acc + num(valorNoMes(v, m)), 0),
       });
@@ -294,6 +316,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       )
     );
     if (temItem) return true;
+    if ((d.parcelas || []).some((p) => num(p.valor) > 0)) return true;
     return Object.values(d.dias || {}).some((reg) =>
       (reg?.lancamentos || []).some((l) => num(l.valor) > 0)
     );
@@ -379,6 +402,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       [lista]: [...p[lista], {
         id: `${lista}${Date.now()}`, nome: "", dia: 10, valor: "",
         ...(lista === 'contasVariaveis' ? { categoria: "" } : {}),
+        ...(lista === 'parcelas' ? { quantidade: 12, mesInicio: mes } : {}),
       }],
     }));
   const delLinha = (lista, id) => setD((p) => ({ ...p, [lista]: p[lista].filter((i) => i.id !== id) }));
@@ -430,6 +454,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       ents: antesDoInicio ? [] : d.rendas.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
       fixs: antesDoInicio ? [] : d.fixos.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
       vars: antesDoInicio ? [] : d.contasVariaveis.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
+      pars: antesDoInicio ? [] : parcelasDoMes(d.parcelas, mes).filter((x) => Number(x.dia) === dia),
     };
   });
 
@@ -638,7 +663,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             fontFamily: "'IBM Plex Mono', monospace", fontSize: '11.5px',
             color: C.soft, marginTop: '10px', lineHeight: 1.7,
           }}>
-            ({brl(r.ganhos)} de ganhos − {brl(r.fixos)} de contas fixas) ÷ {totalDias} dias
+            ({brl(r.ganhos)} de ganhos − {brl(r.fixos)} de contas fixas
+            {(r.parcelas ?? 0) > 0 ? ` − ${brl(r.parcelas)} de parcelas` : ''}) ÷ {totalDias} dias
           </div>
           <p style={{ fontSize: '12px', color: C.soft, marginTop: '10px', lineHeight: 1.6 }}>
             {antesDoInicio
@@ -661,6 +687,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             { lab: "Vem do mês anterior", val: brl(r.abertura), cor: r.abertura < 0 ? C.rose : C.ink },
             { lab: "Ganhos", val: brl(r.ganhos), cor: C.deep },
             { lab: "Contas fixas", val: brl(r.fixos), cor: C.steel },
+            { lab: "Parcelas", val: brl(r.parcelas ?? 0), cor: C.clay },
             { lab: "Variáveis", val: brl(r.variaveis), cor: C.amber },
             { lab: "Sobra do mês", val: brl(r.sobra), cor: r.sobra < 0 ? C.rose : C.deep },
           ].map((box, i) => (
@@ -697,7 +724,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
                 fontSize: '16px', letterSpacing: '-0.01em', margin: '0 0 3px',
               }}>
-                Ganhos, contas fixas e variáveis
+                Ganhos, contas e parcelas
               </h2>
               <p style={{ fontSize: '12px', color: C.soft, margin: '3px 0 0' }}>
                 Os valores são de <strong>{MESES[mes].toLowerCase()}</strong>. Se você não mexer num mês,
@@ -772,6 +799,29 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 <BotaoAdd onClick={() => addLinha('contasVariaveis')}>+ Outra conta variável</BotaoAdd>
                 <Total label="Total de contas variáveis" valor={brl(r.variaveisPlanejadas ?? 0)} cor={C.amber} />
               </Bloco>
+
+              <Bloco cor={C.clay} fundo="#F0E3DA" titulo="Compras parceladas">
+                <p style={{ fontSize: '12px', color: C.soft, marginTop: '-4px', marginBottom: '12px', lineHeight: 1.6 }}>
+                  Informe o valor de <strong>uma</strong> parcela e quantas são. O app conta sozinho e
+                  para na última — some da base diária enquanto durar.
+                </p>
+                <TabelaItens
+                  itens={d.parcelas || []}
+                  exemploNome="ex: Geladeira"
+                  comParcelas
+                  mes={mes}
+                  ano={d.ano}
+                  onNome={(id, v) => setPadrao('parcelas', id, 'nome', v)}
+                  onDia={(id, v) => setPadrao('parcelas', id, 'dia', v)}
+                  onValor={(id, v) => setPadrao('parcelas', id, 'valor', v)}
+                  onQuantidade={(id, v) => setPadrao('parcelas', id, 'quantidade', v)}
+                  onMesInicio={(id, v) => setPadrao('parcelas', id, 'mesInicio', v)}
+                  onDel={(id) => delLinha('parcelas', id)}
+                  onReordenar={(de, para) => reordenar('parcelas', de, para)}
+                />
+                <BotaoAdd onClick={() => addLinha('parcelas')}>+ Outra compra parcelada</BotaoAdd>
+                <Total label={`Parcelas em ${MESES[mes].toLowerCase()}`} valor={brl(r.parcelas ?? 0)} cor={C.clay} />
+              </Bloco>
             </>
           )}
         </div>
@@ -791,7 +841,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
             {linhasDoMes.map((L) => {
               const cor = faixa(L.saldo);
-              const temAuto = L.ents.length || L.fixs.length || L.vars.length;
+              const temAuto = L.ents.length || L.fixs.length || L.vars.length || L.pars.length;
               return (
                 <div key={L.dia} style={{
                   display: 'flex',
@@ -852,6 +902,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                         {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, mes)))}`, C.pale, C.deep)}</React.Fragment>)}
                         {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, mes)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
                         {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, mes)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, mes)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
                       </div>
                     )}
 
@@ -919,6 +970,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                             {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, mes)))}`, C.pale, C.deep)}</React.Fragment>)}
                             {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, mes)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
                             {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, mes)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, mes)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
                           </div>
                         </td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid #E2E6DE', verticalAlign: 'top' }}>
@@ -1111,7 +1163,7 @@ function Total({ label, valor, cor }) {
   );
 }
 
-function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], mes = 0, onNome, onDia, onValor, onCategoria, onDel, onReordenar, onHerdar }) {
+function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias = [], mes = 0, ano, onNome, onDia, onValor, onCategoria, onQuantidade, onMesInicio, onDel, onReordenar, onHerdar }) {
   const [arrasto, setArrasto] = useState(null); // { idx, deltaY, alvo, altura }
   const refsLinhas = useRef([]);
   const medidas = useRef([]);
@@ -1251,15 +1303,15 @@ function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], mes = 
                 <input
                   type="text"
                   inputMode="decimal"
-                  placeholder="0,00"
-                  value={valorNoMes(item, mes)}
+                  placeholder={comParcelas ? "valor da parcela" : "0,00"}
+                  value={comParcelas ? item.valor : valorNoMes(item, mes)}
                   onChange={(e) => onValor(item.id, e.target.value)}
                   style={{
-                    border: `1px solid ${origem.proprio ? 'rgba(18,33,28,.28)' : 'rgba(18,33,28,.16)'}`,
+                    border: `1px solid ${(comParcelas || origem.proprio) ? 'rgba(18,33,28,.28)' : 'rgba(18,33,28,.16)'}`,
                     background: '#fff', borderRadius: '8px',
                     padding: '8px 9px', fontFamily: "'IBM Plex Mono', monospace",
                     fontVariantNumeric: 'tabular-nums', fontSize: '13px',
-                    color: origem.proprio ? C.ink : C.soft,
+                    color: (comParcelas || origem.proprio) ? C.ink : C.soft,
                     textAlign: 'right', flex: '1 1 auto', minWidth: 0,
                   }}
                 />
@@ -1276,7 +1328,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], mes = 
                 </button>
               </div>
 
-              {(origem.proprio || origem.de !== null) && (
+              {!comParcelas && (origem.proprio || origem.de !== null) && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
                   marginTop: '6px', fontSize: '10.5px', color: C.soft,
@@ -1301,6 +1353,73 @@ function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], mes = 
                   )}
                 </div>
               )}
+
+              {comParcelas && (() => {
+                const qtd = Number(item.quantidade || 0);
+                const ini = Number(item.mesInicio ?? 0);
+                const fimIdx = ini + qtd - 1;
+                const passaDoAno = fimIdx > 11;
+                const restamNoAno = Math.max(0, Math.min(fimIdx, 11) - ini + 1);
+                const numAtual = mes - ini + 1;
+                const ativa = qtd > 0 && numAtual >= 1 && numAtual <= qtd;
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                      <span style={{
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+                        letterSpacing: '0.08em', textTransform: 'uppercase', color: C.soft, flex: 'none',
+                      }}>
+                        Parcelas
+                      </span>
+                      <select
+                        value={item.quantidade || 12}
+                        onChange={(e) => onQuantidade?.(item.id, Number(e.target.value))}
+                        aria-label="Quantidade de parcelas"
+                        style={{
+                          border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                          padding: '8px 6px', fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px',
+                          color: C.ink, flex: 'none',
+                        }}
+                      >
+                        {Array.from({ length: 47 }, (_, n) => n + 2).map((n) => (
+                          <option key={n} value={n}>{n}x</option>
+                        ))}
+                      </select>
+
+                      <span style={{ fontSize: '11px', color: C.soft, flex: 'none' }}>a partir de</span>
+                      <select
+                        value={ini}
+                        onChange={(e) => onMesInicio?.(item.id, Number(e.target.value))}
+                        aria-label="Mês da primeira parcela"
+                        style={{
+                          border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                          padding: '8px 6px', fontFamily: 'Inter, sans-serif', fontSize: '12px',
+                          color: C.ink, flex: '1 1 auto', minWidth: 0,
+                        }}
+                      >
+                        {MESES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                      </select>
+                    </div>
+
+                    {num(item.valor) > 0 && qtd > 0 && (
+                      <div style={{ fontSize: '10.5px', color: C.soft, marginTop: '6px', lineHeight: 1.6 }}>
+                        {qtd}x de {brl(num(item.valor))} = <strong style={{ color: C.clay }}>{brl(num(item.valor) * qtd)}</strong>
+                        {' · '}
+                        {ativa
+                          ? `${numAtual}ª em ${MESES[mes].toLowerCase()}`
+                          : (mes < ini ? `começa em ${MESES[ini].toLowerCase()}` : 'já quitada')}
+                        {!passaDoAno && ` · termina em ${MESES[fimIdx]?.toLowerCase()}`}
+                        {passaDoAno && (
+                          <span style={{ display: 'block', color: C.rose, marginTop: '3px' }}>
+                            {restamNoAno} {restamNoAno === 1 ? 'parcela cai' : 'parcelas caem'} em {ano};
+                            as {qtd - restamNoAno} restantes ficam para {ano + 1} e ainda não aparecem aqui.
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {comCategoria && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
