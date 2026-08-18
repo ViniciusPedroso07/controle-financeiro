@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import ControleDiario from './ControleDiario';
 import TelaLogin from './TelaLogin';
+import TelaFamilia from './TelaFamilia';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -9,76 +10,94 @@ const supabase = createClient(
 );
 
 export default function App() {
-  const [familyCode, setFamilyCode] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [carregando, setCarregando] = useState(false);
+  const [sessao, setSessao] = useState(null);
+  const [familyId, setFamilyId] = useState(null);
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState('');
 
+  // observa o login/logout do Supabase
   useEffect(() => {
-    // Verifica se tem um código salvo localmente
-    const saved = localStorage.getItem('family_code');
-    if (saved) {
-      setFamilyCode(saved);
-    }
-    setLoading(false);
+    supabase.auth.getSession().then(({ data }) => {
+      setSessao(data.session);
+      setCarregando(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_evento, novaSessao) => {
+      setSessao(novaSessao);
+    });
+
+    return () => listener.subscription.unsubscribe();
   }, []);
 
-  const handleEntrar = async (codigo) => {
-    setCarregando(true);
-    try {
-      // Verifica se existe a família
-      const { data, error } = await supabase
-        .from('families')
-        .select('id')
-        .eq('code', codigo.toUpperCase())
-        .single();
+  // depois de logado, descobre se já tem família
+  useEffect(() => {
+    if (!sessao) { setFamilyId(null); return; }
 
-      if (error && error.code !== 'PGRST116') throw error;
+    (async () => {
+      const { data, error } = await supabase.rpc('my_family_id');
+      if (error) { console.error(error); return; }
+      setFamilyId(data || null);
+    })();
+  }, [sessao]);
 
-      if (!data) {
-        // Cria uma nova família
-        const { data: newFamily, error: createError } = await supabase
-          .from('families')
-          .insert([{ code: codigo.toUpperCase(), data: {} }])
-          .select()
-          .single();
-
-        if (createError) throw createError;
-        localStorage.setItem('family_code', codigo.toUpperCase());
-        setFamilyCode(codigo.toUpperCase());
-      } else {
-        localStorage.setItem('family_code', codigo.toUpperCase());
-        setFamilyCode(codigo.toUpperCase());
-      }
-    } catch (err) {
-      alert('Erro ao conectar: ' + err.message);
-    } finally {
-      setCarregando(false);
-    }
+  const entrarComGoogle = async () => {
+    setErro('');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) setErro('Não foi possível conectar com o Google: ' + error.message);
   };
 
-  const handleSair = () => {
-    localStorage.removeItem('family_code');
-    setFamilyCode(null);
+  const sair = async () => {
+    await supabase.auth.signOut();
+    setFamilyId(null);
   };
 
-  if (loading) {
+  const criarFamilia = async (nome) => {
+    const { data, error } = await supabase.rpc('create_family', { p_name: nome });
+    if (error) throw error;
+    setFamilyId(data);
+  };
+
+  const reivindicarCodigoAntigo = async (codigo) => {
+    const { data, error } = await supabase.rpc('claim_family_by_code', { p_code: codigo });
+    if (error) throw error;
+    setFamilyId(data);
+  };
+
+  const aceitarConvite = async (codigo) => {
+    const { data, error } = await supabase.rpc('accept_invite', { p_code: codigo });
+    if (error) throw error;
+    setFamilyId(data);
+  };
+
+  if (carregando) {
     return (
       <div style={{
-        background: 'var(--paper)',
-        color: 'var(--soft)',
-        minHeight: '100vh',
-        display: 'grid',
-        placeItems: 'center',
-        fontFamily: 'system-ui'
+        background: '#EEF0EA', color: '#63736C', minHeight: '100vh',
+        display: 'grid', placeItems: 'center', fontFamily: 'system-ui',
       }}>
         Abrindo...
       </div>
     );
   }
 
-  if (!familyCode) {
-    return <TelaLogin onEntrar={handleEntrar} carregando={carregando} />;
+  if (!sessao) {
+    return <TelaLogin onEntrarComGoogle={entrarComGoogle} erro={erro} />;
   }
 
-  return <ControleDiario familyCode={familyCode} supabase={supabase} onSair={handleSair} />;
+  if (!familyId) {
+    return (
+      <TelaFamilia
+        email={sessao.user.email}
+        onCriar={criarFamilia}
+        onReivindicar={reivindicarCodigoAntigo}
+        onAceitarConvite={aceitarConvite}
+        onSair={sair}
+      />
+    );
+  }
+
+  return <ControleDiario familyId={familyId} supabase={supabase} onSair={sair} />;
 }
