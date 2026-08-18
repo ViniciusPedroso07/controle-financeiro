@@ -28,7 +28,6 @@ const VARIAVEIS_INICIAIS = [{ id: "v1", nome: "", dia: 10, valor: "", categoria:
 
 const PADRAO = {
   ano: new Date().getFullYear(),
-  mesInicial: new Date().getMonth(),
   rendas: RENDAS_INICIAIS,
   fixos: FIXOS_INICIAIS,
   contasVariaveis: VARIAVEIS_INICIAIS,
@@ -181,7 +180,37 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   const hoje = new Date();
   const hojeChave = chaveDia(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
-  const mesInicial = d.mesInicial ?? hoje.getMonth();
+  // O controle começa sozinho no primeiro mês em que existe algo preenchido —
+  // seja um valor de ganho/conta ou um lançamento no calendário.
+  const mesInicial = useMemo(() => {
+    let menor = null;
+    const considerar = (m) => { if (m !== null && (menor === null || m < menor)) menor = m; };
+
+    ['rendas', 'fixos', 'contasVariaveis'].forEach((chave) => {
+      (d[chave] || []).forEach((item) => {
+        Object.entries(item.valores || {}).forEach(([m, v]) => {
+          if (num(v) > 0) considerar(Number(m));
+        });
+      });
+    });
+
+    Object.entries(d.dias || {}).forEach(([k, reg]) => {
+      const temValor = (reg?.lancamentos || []).some((l) => num(l.valor) > 0);
+      if (!temValor) return;
+      const [ano, mesTexto] = k.split('-');
+      if (Number(ano) !== d.ano) return;
+      considerar(Number(mesTexto) - 1);
+    });
+
+    if (menor !== null) return menor;
+
+    // dados antigos, com valor base sem mês associado: mantém o que já estava salvo
+    const temValorBase = ['rendas', 'fixos', 'contasVariaveis']
+      .some((chave) => (d[chave] || []).some((item) => num(item.valor) > 0));
+    if (temValorBase && d.mesInicial != null) return d.mesInicial;
+
+    return hoje.getMonth();
+  }, [d]);
 
   const calc = useMemo(() => {
     const saldos = {};
@@ -256,6 +285,18 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       });
     }
     return { saldos, mesesInfo };
+  }, [d]);
+
+  const temAlgumDado = useMemo(() => {
+    const temItem = ['rendas', 'fixos', 'contasVariaveis'].some((chave) =>
+      (d[chave] || []).some((item) =>
+        num(item.valor) > 0 || Object.values(item.valores || {}).some((v) => num(v) > 0)
+      )
+    );
+    if (temItem) return true;
+    return Object.values(d.dias || {}).some((reg) =>
+      (reg?.lancamentos || []).some((l) => num(l.valor) > 0)
+    );
   }, [d]);
 
   const r = calc.mesesInfo[mes];
@@ -458,33 +499,11 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           }}>— Controle Financeiro</span>
         </h1>
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
-          marginTop: '14px', marginBottom: '16px',
-        }}>
-          <span style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px',
-            letterSpacing: '0.1em', textTransform: 'uppercase', color: C.soft,
-          }}>
-            Começar a valer em
-          </span>
-          <select
-            value={d.mesInicial}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              setD((p) => ({ ...p, mesInicial: v }));
-              setMes(v);
-            }}
-            style={{
-              fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '14px',
-              color: C.ink, background: C.card, border: `1px solid ${C.rule}`,
-              borderRadius: '8px', padding: '7px 12px', cursor: 'pointer',
-            }}
-          >
-            {MESES.map((m, i) => <option key={m} value={i}>{m}</option>)}
-          </select>
-          <span style={{ fontSize: '12px', color: C.soft }}>tudo antes disso fica zerado</span>
-        </div>
+        <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 16px', lineHeight: 1.6 }}>
+          {temAlgumDado
+            ? `O controle começa em ${MESES[mesInicial].toLowerCase()} — o primeiro mês que você preencheu. Meses anteriores ficam zerados.`
+            : 'Preencha um ganho, uma conta ou um lançamento e o controle começa a contar daquele mês em diante.'}
+        </p>
 
         {/* saldo do mês — centralizado, sem menção a quem usa */}
         <div style={{
@@ -623,7 +642,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           </div>
           <p style={{ fontSize: '12px', color: C.soft, marginTop: '10px', lineHeight: 1.6 }}>
             {antesDoInicio
-              ? 'Mês anterior ao início do controle — sem lançamentos aqui.'
+              ? `Mês anterior a ${MESES[mesInicial].toLowerCase()}, quando o controle começa.`
               : r.variaveis > 0 ? (
                 <>
                   Você já gastou <strong style={{ color: noRitmo ? C.deep : C.rose }}>{brl(mediaGasta)} por dia</strong> em
