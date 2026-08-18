@@ -44,7 +44,12 @@ export default function App() {
     setErro('');
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: window.location.origin,
+        // força o Google a sempre perguntar qual conta usar, em vez de
+        // pular direto para a última conta logada no navegador
+        queryParams: { prompt: 'select_account' },
+      },
     });
     if (error) setErro('Não foi possível conectar com o Google: ' + error.message);
   };
