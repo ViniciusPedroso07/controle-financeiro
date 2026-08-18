@@ -69,6 +69,28 @@ const normalizarDias = (dias = {}) => {
   return saida;
 };
 
+// Valor de um item no mês pedido.
+// Se o mês não tem valor próprio, herda do mês preenchido mais recente antes dele.
+// Se nenhum mês anterior tem valor, usa o valor base do item.
+const valorNoMes = (item, mes) => {
+  const porMes = item.valores || {};
+  for (let m = mes; m >= 0; m--) {
+    const v = porMes[m];
+    if (v !== undefined && v !== null) return v;
+  }
+  return item.valor ?? '';
+};
+
+// O mês tem valor próprio (foi editado nele) ou está herdando de outro?
+const origemDoValor = (item, mes) => {
+  const porMes = item.valores || {};
+  if (porMes[mes] !== undefined && porMes[mes] !== null) return { proprio: true, de: mes };
+  for (let m = mes - 1; m >= 0; m--) {
+    if (porMes[m] !== undefined && porMes[m] !== null) return { proprio: false, de: m };
+  }
+  return { proprio: false, de: null };
+};
+
 const diasNoMes = (ano, mes) => new Date(ano, mes + 1, 0).getDate();
 const chaveDia = (ano, mes, dia) => `${ano}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
 
@@ -166,9 +188,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     const mesesInfo = [];
     let saldo = 0;
 
-    const ganhosTotal = d.rendas.reduce((s, r) => s + num(r.valor), 0);
-    const fixosTotal = d.fixos.reduce((s, f) => s + num(f.valor), 0);
-    const variaveisTotalTipico = d.contasVariaveis.reduce((s, v) => s + num(v.valor), 0);
 
     for (let m = 0; m < 12; m++) {
       const antes = m < mesInicial;
@@ -181,6 +200,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       }
 
       const abertura = saldo;
+      const ganhosTotal = d.rendas.reduce((acc, r) => acc + num(valorNoMes(r, m)), 0);
+      const fixosTotal = d.fixos.reduce((acc, f) => acc + num(valorNoMes(f, m)), 0);
       const baseDia = total > 0 ? (ganhosTotal - fixosTotal) / total : 0;
       let variaveis = 0;
       let entradasAvulsasMes = 0;
@@ -199,13 +220,13 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           else avulso += v;
         });
 
-        const ent = d.rendas.reduce((s, r) => (Number(r.dia) === dia ? s + num(r.valor) : s), 0);
-        const fix = d.fixos.reduce((s, f) => (Number(f.dia) === dia ? s + num(f.valor) : s), 0);
+        const ent = d.rendas.reduce((acc, r) => (Number(r.dia) === dia ? acc + num(valorNoMes(r, m)) : acc), 0);
+        const fix = d.fixos.reduce((acc, f) => (Number(f.dia) === dia ? acc + num(valorNoMes(f, m)) : acc), 0);
 
         let varPlanejada = 0;
         d.contasVariaveis.forEach((x) => {
           if (Number(x.dia) === dia) {
-            const val = num(x.valor);
+            const val = num(valorNoMes(x, m));
             varPlanejada += val;
             if (val > 0) {
               const c = (x.categoria && x.categoria.trim()) || (x.nome && x.nome.trim()) || 'Sem categoria';
@@ -231,9 +252,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         abertura, ganhos: ganhosTotal + entradasAvulsasMes, fixos: fixosTotal, baseDia, variaveis,
         sobra: ganhosTotal + entradasAvulsasMes - fixosTotal - variaveis,
         fim: saldo, cats, dias: total,
+        variaveisPlanejadas: d.contasVariaveis.reduce((acc, v) => acc + num(valorNoMes(v, m)), 0),
       });
     }
-    return { saldos, mesesInfo, variaveisTotalTipico };
+    return { saldos, mesesInfo };
   }, [d]);
 
   const r = calc.mesesInfo[mes];
@@ -255,6 +277,25 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   const setPadrao = (lista, id, campo, valor) =>
     setD((p) => ({ ...p, [lista]: p[lista].map((i) => (i.id === id ? { ...i, [campo]: valor } : i)) }));
+
+  // grava o valor apenas no mês aberto; os meses seguintes herdam automaticamente
+  const setValorDoMes = (lista, id, valor) =>
+    setD((p) => ({
+      ...p,
+      [lista]: p[lista].map((i) => (i.id === id ? { ...i, valores: { ...(i.valores || {}), [mes]: valor } } : i)),
+    }));
+
+  // remove o valor próprio do mês, voltando a herdar do mês anterior
+  const voltarAHerdar = (lista, id) =>
+    setD((p) => ({
+      ...p,
+      [lista]: p[lista].map((i) => {
+        if (i.id !== id) return i;
+        const valores = { ...(i.valores || {}) };
+        delete valores[mes];
+        return { ...i, valores };
+      }),
+    }));
 
   const listaDoDia = (p, k) => (Array.isArray(p.dias[k]?.lancamentos) ? p.dias[k].lancamentos : []);
 
@@ -345,9 +386,9 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       sem,
       fds: sem === 0 || sem === 6,
       ehHoje: k === hojeChave,
-      ents: antesDoInicio ? [] : d.rendas.filter((x) => Number(x.dia) === dia && num(x.valor) > 0),
-      fixs: antesDoInicio ? [] : d.fixos.filter((x) => Number(x.dia) === dia && num(x.valor) > 0),
-      vars: antesDoInicio ? [] : d.contasVariaveis.filter((x) => Number(x.dia) === dia && num(x.valor) > 0),
+      ents: antesDoInicio ? [] : d.rendas.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
+      fixs: antesDoInicio ? [] : d.fixos.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
+      vars: antesDoInicio ? [] : d.contasVariaveis.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
     };
   });
 
@@ -640,7 +681,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 Ganhos, contas fixas e variáveis
               </h2>
               <p style={{ fontSize: '12px', color: C.soft, margin: '3px 0 0' }}>
-                Escreva o nome, o dia e o valor. Vale a partir de {ABREV[mesInicial]} e aparece sozinho no calendário.
+                Os valores são de <strong>{MESES[mes].toLowerCase()}</strong>. Se você não mexer num mês,
+                ele repete o valor do mês anterior — então só edite quando a conta mudar.
               </p>
             </div>
             <button
@@ -663,12 +705,14 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   exemploNome="ex: Salário"
                   onNome={(id, v) => setPadrao('rendas', id, 'nome', v)}
                   onDia={(id, v) => setPadrao('rendas', id, 'dia', v)}
-                  onValor={(id, v) => setPadrao('rendas', id, 'valor', v)}
+                  onValor={(id, v) => setValorDoMes('rendas', id, v)}
+                  onHerdar={(id) => voltarAHerdar('rendas', id)}
+                  mes={mes}
                   onDel={(id) => delLinha('rendas', id)}
                   onReordenar={(de, para) => reordenar('rendas', de, para)}
                 />
                 <BotaoAdd onClick={() => addLinha('rendas')}>+ Outra entrada</BotaoAdd>
-                <Total label="Total que entra" valor={brl(calc.mesesInfo[mesInicial]?.ganhos ?? 0)} cor={C.deep} />
+                <Total label="Total que entra" valor={brl(r.ganhos)} cor={C.deep} />
               </Bloco>
 
               <Bloco cor={C.steel} fundo="#E1E7EF" titulo="Sai todo mês (contas fixas)">
@@ -677,12 +721,14 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   exemploNome="ex: Aluguel"
                   onNome={(id, v) => setPadrao('fixos', id, 'nome', v)}
                   onDia={(id, v) => setPadrao('fixos', id, 'dia', v)}
-                  onValor={(id, v) => setPadrao('fixos', id, 'valor', v)}
+                  onValor={(id, v) => setValorDoMes('fixos', id, v)}
+                  onHerdar={(id) => voltarAHerdar('fixos', id)}
+                  mes={mes}
                   onDel={(id) => delLinha('fixos', id)}
                   onReordenar={(de, para) => reordenar('fixos', de, para)}
                 />
                 <BotaoAdd onClick={() => addLinha('fixos')}>+ Outra conta fixa</BotaoAdd>
-                <Total label="Total de contas fixas" valor={brl(calc.mesesInfo[mesInicial]?.fixos ?? 0)} cor={C.steel} />
+                <Total label="Total de contas fixas" valor={brl(r.fixos)} cor={C.steel} />
               </Bloco>
 
               <Bloco cor={C.amber} fundo="#F3E6CC" titulo="Contas variáveis">
@@ -697,13 +743,15 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   categorias={categoriasUsadas}
                   onNome={(id, v) => setPadrao('contasVariaveis', id, 'nome', v)}
                   onDia={(id, v) => setPadrao('contasVariaveis', id, 'dia', v)}
-                  onValor={(id, v) => setPadrao('contasVariaveis', id, 'valor', v)}
+                  onValor={(id, v) => setValorDoMes('contasVariaveis', id, v)}
+                  onHerdar={(id) => voltarAHerdar('contasVariaveis', id)}
+                  mes={mes}
                   onCategoria={(id, v) => setPadrao('contasVariaveis', id, 'categoria', v)}
                   onDel={(id) => delLinha('contasVariaveis', id)}
                   onReordenar={(de, para) => reordenar('contasVariaveis', de, para)}
                 />
                 <BotaoAdd onClick={() => addLinha('contasVariaveis')}>+ Outra conta variável</BotaoAdd>
-                <Total label="Total de contas variáveis" valor={brl(calc.variaveisTotalTipico)} cor={C.amber} />
+                <Total label="Total de contas variáveis" valor={brl(r.variaveisPlanejadas ?? 0)} cor={C.amber} />
               </Bloco>
             </>
           )}
@@ -782,9 +830,9 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
                     {temAuto > 0 && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
-                        {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
-                        {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
-                        {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                        {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, mes)))}`, C.pale, C.deep)}</React.Fragment>)}
+                        {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, mes)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                        {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, mes)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
                       </div>
                     )}
 
@@ -849,9 +897,9 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                         </td>
                         <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left', verticalAlign: 'top' }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(x.valor))}`, C.pale, C.deep)}</React.Fragment>)}
-                            {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(x.valor))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
-                            {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(x.valor))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, mes)))}`, C.pale, C.deep)}</React.Fragment>)}
+                            {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, mes)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                            {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, mes)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
                           </div>
                         </td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid #E2E6DE', verticalAlign: 'top' }}>
@@ -1044,7 +1092,7 @@ function Total({ label, valor, cor }) {
   );
 }
 
-function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome, onDia, onValor, onCategoria, onDel, onReordenar }) {
+function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], mes = 0, onNome, onDia, onValor, onCategoria, onDel, onReordenar, onHerdar }) {
   const [arrasto, setArrasto] = useState(null); // { idx, deltaY, alvo, altura }
   const refsLinhas = useRef([]);
   const medidas = useRef([]);
@@ -1097,6 +1145,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome
     <>
       {itens.map((item, i) => {
         const arrastando = arrasto?.idx === i;
+        const origem = origemDoValor(item, mes);
         return (
           <div
             key={item.id}
@@ -1184,12 +1233,14 @@ function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome
                   type="text"
                   inputMode="decimal"
                   placeholder="0,00"
-                  value={item.valor}
+                  value={valorNoMes(item, mes)}
                   onChange={(e) => onValor(item.id, e.target.value)}
                   style={{
-                    border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
+                    border: `1px solid ${origem.proprio ? 'rgba(18,33,28,.28)' : 'rgba(18,33,28,.16)'}`,
+                    background: '#fff', borderRadius: '8px',
                     padding: '8px 9px', fontFamily: "'IBM Plex Mono', monospace",
-                    fontVariantNumeric: 'tabular-nums', fontSize: '13px', color: C.ink,
+                    fontVariantNumeric: 'tabular-nums', fontSize: '13px',
+                    color: origem.proprio ? C.ink : C.soft,
                     textAlign: 'right', flex: '1 1 auto', minWidth: 0,
                   }}
                 />
@@ -1205,6 +1256,32 @@ function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome
                   ×
                 </button>
               </div>
+
+              {(origem.proprio || origem.de !== null) && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+                  marginTop: '6px', fontSize: '10.5px', color: C.soft,
+                }}>
+                  {origem.proprio ? (
+                    <>
+                      <span style={{ color: C.deep }}>valor deste mês</span>
+                      {origem.de !== 0 && (
+                        <button
+                          onClick={() => onHerdar?.(item.id)}
+                          style={{
+                            border: 0, background: 'transparent', color: C.soft,
+                            fontSize: '10.5px', textDecoration: 'underline', cursor: 'pointer', padding: 0,
+                          }}
+                        >
+                          voltar a repetir o mês anterior
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <span>repetindo o valor de {MESES[origem.de].toLowerCase()}</span>
+                  )}
+                </div>
+              )}
 
               {comCategoria && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
@@ -1246,24 +1323,43 @@ function TabelaItens({ itens, exemploNome, comCategoria, categorias = [], onNome
   );
 }
 
-// Lançamentos avulsos de um dia. Dia vazio mostra só um botão discreto —
+// Lançamentos avulsos de um dia. Dia vazio mostra só os dois botões de adicionar —
 // os campos aparecem conforme a pessoa adiciona, para o calendário não ficar carregado.
-function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
-  if (!lancs.length) {
-    return (
+function BotoesAdicionar({ onAdd, primeiro }) {
+  const base = {
+    border: 0, background: 'transparent',
+    fontSize: '12px', fontFamily: 'Inter, sans-serif',
+    cursor: 'pointer', padding: '4px 0',
+    display: 'inline-flex', alignItems: 'center', gap: '4px',
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingTop: primeiro ? '2px' : 0 }}>
       <button
         onClick={() => onAdd('saida')}
-        style={{
-          border: 0, background: 'transparent', color: C.soft,
-          fontSize: '12px', fontFamily: 'Inter, sans-serif',
-          cursor: 'pointer', padding: '5px 0', display: 'flex', alignItems: 'center', gap: '5px',
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.color = C.ink; }}
-        onMouseLeave={(e) => { e.currentTarget.style.color = C.soft; }}
+        style={{ ...base, color: C.rose }}
+        title="Adicionar um gasto"
       >
-        <span style={{ fontSize: '14px', lineHeight: 1 }}>+</span> lançamento
+        <span style={{ fontSize: '13px', lineHeight: 1, fontWeight: 700 }}>−</span>
+        {primeiro ? 'gasto' : 'outro gasto'}
       </button>
-    );
+
+      <span aria-hidden="true" style={{ color: C.rule, fontSize: '11px' }}>|</span>
+
+      <button
+        onClick={() => onAdd('entrada')}
+        style={{ ...base, color: C.deep }}
+        title="Adicionar uma entrada"
+      >
+        <span style={{ fontSize: '13px', lineHeight: 1, fontWeight: 700 }}>+</span>
+        entrada
+      </button>
+    </div>
+  );
+}
+
+function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
+  if (!lancs.length) {
+    return <BotoesAdicionar onAdd={onAdd} primeiro />;
   }
 
   return (
@@ -1273,22 +1369,43 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
         const cor = ehEntrada ? C.deep : C.rose;
         return (
           <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-            {/* alterna entre entrada e saída */}
-            <button
-              onClick={() => onCampo(l.id, 'tipo', ehEntrada ? 'saida' : 'entrada')}
-              title={ehEntrada ? 'Entrada — toque para virar saída' : 'Saída — toque para virar entrada'}
-              aria-label={ehEntrada ? 'Entrada' : 'Saída'}
-              style={{
-                flex: 'none', width: '26px', height: '32px',
-                border: `1px solid ${ehEntrada ? C.pale : C.rosePale}`,
-                background: ehEntrada ? C.pale : C.rosePale,
-                color: cor, borderRadius: '7px',
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: '14px', fontWeight: 700,
-                cursor: 'pointer', lineHeight: 1, padding: 0,
-              }}
-            >
-              {ehEntrada ? '+' : '−'}
-            </button>
+            {/* as duas opções ficam à vista: toque direto na que quiser */}
+            <div style={{
+              flex: 'none', display: 'flex',
+              border: `1px solid ${C.rule}`, borderRadius: '7px', overflow: 'hidden',
+            }}>
+              <button
+                onClick={() => onCampo(l.id, 'tipo', 'saida')}
+                aria-pressed={!ehEntrada}
+                aria-label="Marcar como gasto"
+                title="Gasto"
+                style={{
+                  width: '26px', height: '32px', border: 0, padding: 0, cursor: 'pointer',
+                  background: !ehEntrada ? C.rosePale : 'transparent',
+                  color: !ehEntrada ? C.rose : 'rgba(99,115,108,.55)',
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: '14px', fontWeight: 700, lineHeight: 1,
+                }}
+              >
+                −
+              </button>
+              <button
+                onClick={() => onCampo(l.id, 'tipo', 'entrada')}
+                aria-pressed={ehEntrada}
+                aria-label="Marcar como entrada"
+                title="Entrada"
+                style={{
+                  width: '26px', height: '32px', border: 0, padding: 0, cursor: 'pointer',
+                  borderLeft: `1px solid ${C.rule}`,
+                  background: ehEntrada ? C.pale : 'transparent',
+                  color: ehEntrada ? C.deep : 'rgba(99,115,108,.55)',
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: '14px', fontWeight: 700, lineHeight: 1,
+                }}
+              >
+                +
+              </button>
+            </div>
 
             <input
               type="text"
@@ -1298,7 +1415,7 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
               value={l.valor}
               onChange={(e) => onCampo(l.id, 'valor', e.target.value)}
               style={{
-                flex: '0 1 86px', minWidth: 0,
+                flex: '0 1 84px', minWidth: 0,
                 border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '7px',
                 padding: '7px 8px', fontFamily: "'IBM Plex Mono', monospace",
                 fontVariantNumeric: 'tabular-nums', fontSize: '13px',
@@ -1339,19 +1456,7 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
         );
       })}
 
-      <button
-        onClick={() => onAdd('saida')}
-        style={{
-          justifySelf: 'start',
-          border: 0, background: 'transparent', color: C.soft,
-          fontSize: '12px', fontFamily: 'Inter, sans-serif',
-          cursor: 'pointer', padding: '2px 0', display: 'flex', alignItems: 'center', gap: '5px',
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.color = C.ink; }}
-        onMouseLeave={(e) => { e.currentTarget.style.color = C.soft; }}
-      >
-        <span style={{ fontSize: '14px', lineHeight: 1 }}>+</span> outro
-      </button>
+      <BotoesAdicionar onAdd={onAdd} />
     </div>
   );
 }
