@@ -14,6 +14,11 @@ const C = {
   amber: '#B4832A',
   steel: '#48607A',
   clay: '#8C5A3C',
+  azul: '#2E5C86',
+  azulMedio: '#4A7BA8',
+  azulPale: '#D6E3EF',
+  azulBg: '#E9F0F7',
+  azulPaper: '#E8EDF2',
 };
 
 const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
@@ -74,34 +79,70 @@ const normalizarDias = (dias = {}) => {
 // Valor de um item no mês pedido.
 // Se o mês não tem valor próprio, herda do mês preenchido mais recente antes dele.
 // Se nenhum mês anterior tem valor, usa o valor base do item.
-const valorNoMes = (item, mes) => {
+const valorNoMes = (item, abs) => {
   const porMes = item.valores || {};
-  for (let m = mes; m >= 0; m--) {
-    const v = porMes[m];
+  const chaves = Object.keys(porMes).map(Number).filter((k) => k <= abs).sort((a, b) => b - a);
+  for (const k of chaves) {
+    const v = porMes[k];
     if (v !== undefined && v !== null) return v;
   }
   return item.valor ?? '';
 };
 
 // O mês tem valor próprio (foi editado nele) ou está herdando de outro?
-const origemDoValor = (item, mes) => {
+const origemDoValor = (item, abs) => {
   const porMes = item.valores || {};
-  if (porMes[mes] !== undefined && porMes[mes] !== null) return { proprio: true, de: mes };
-  for (let m = mes - 1; m >= 0; m--) {
-    if (porMes[m] !== undefined && porMes[m] !== null) return { proprio: false, de: m };
+  if (porMes[abs] !== undefined && porMes[abs] !== null) return { proprio: true, de: abs };
+  const anteriores = Object.keys(porMes).map(Number).filter((k) => k < abs).sort((a, b) => b - a);
+  for (const k of anteriores) {
+    if (porMes[k] !== undefined && porMes[k] !== null) return { proprio: false, de: k };
   }
   return { proprio: false, de: null };
 };
 
+// Mês absoluto: ano*12 + mês. É o que permite o saldo atravessar dezembro
+// e as parcelas continuarem no ano seguinte.
+const absMes = (ano, mes) => ano * 12 + mes;
+const anoDe = (abs) => Math.floor(abs / 12);
+const mesDe = (abs) => ((abs % 12) + 12) % 12;
+const rotuloAbs = (abs) => `${MESES[mesDe(abs)].toLowerCase()} de ${anoDe(abs)}`;
+
+// Converte dados antigos (mês 0–11 sem ano) para o índice absoluto.
+const migrarParaAbsoluto = (dados) => {
+  const ano = dados.ano || new Date().getFullYear();
+  const ehAntigo = (k) => Number(k) >= 0 && Number(k) < 12;
+
+  const converterLista = (lista = []) => lista.map((item) => {
+    const valores = {};
+    Object.entries(item.valores || {}).forEach(([k, v]) => {
+      valores[ehAntigo(k) ? absMes(ano, Number(k)) : Number(k)] = v;
+    });
+    return { ...item, valores };
+  });
+
+  const parcelas = (dados.parcelas || []).map((p) => ({
+    ...p,
+    mesInicio: p.mesInicio != null && ehAntigo(p.mesInicio) ? absMes(ano, Number(p.mesInicio)) : Number(p.mesInicio ?? absMes(ano, 0)),
+  }));
+
+  return {
+    ...dados,
+    rendas: converterLista(dados.rendas),
+    fixos: converterLista(dados.fixos),
+    contasVariaveis: converterLista(dados.contasVariaveis),
+    parcelas,
+  };
+};
+
 // Uma parcela vale do mês da compra até completar a quantidade contratada.
 // Diferente das contas, ela não herda valor: tem começo e fim definidos.
-const parcelaAtiva = (p, mes) => {
+const parcelaAtiva = (p, abs) => {
   const ini = Number(p.mesInicio ?? 0);
   const qtd = Number(p.quantidade || 0);
-  return qtd > 0 && mes >= ini && mes < ini + qtd;
+  return qtd > 0 && abs >= ini && abs < ini + qtd;
 };
-const numeroDaParcela = (p, mes) => mes - Number(p.mesInicio ?? 0) + 1;
-const parcelasDoMes = (parcelas = [], mes) => parcelas.filter((p) => parcelaAtiva(p, mes) && num(p.valor) > 0);
+const numeroDaParcela = (p, abs) => abs - Number(p.mesInicio ?? 0) + 1;
+const parcelasDoMes = (parcelas = [], abs) => parcelas.filter((p) => parcelaAtiva(p, abs) && num(p.valor) > 0);
 
 const diasNoMes = (ano, mes) => new Date(ano, mes + 1, 0).getDate();
 const chaveDia = (ano, mes, dia) => `${ano}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
@@ -109,6 +150,7 @@ const chaveDia = (ano, mes, dia) => `${ano}-${String(mes + 1).padStart(2, "0")}-
 export default function ControleDiario({ familyCode, supabase, onSair }) {
   const [d, setD] = useState(PADRAO);
   const [mes, setMes] = useState(new Date().getMonth());
+  const [anoVisto, setAnoVisto] = useState(new Date().getFullYear());
   const [carregando, setCarregando] = useState(true);
   const [aviso, setAviso] = useState("");
   const [abrirPainel, setAbrirPainel] = useState(true);
@@ -124,7 +166,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     const botao = mesAtivoRef.current;
     const alvo = botao.offsetLeft - (trilha.clientWidth / 2) + (botao.clientWidth / 2);
     trilha.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
-  }, [mes, carregando, ehMobile]);
+  }, [mes, anoVisto, carregando, ehMobile]);
 
   useEffect(() => {
     const aoRedimensionar = () => setEhMobile(window.innerWidth < 760);
@@ -146,7 +188,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
         if (data && data.data && Object.keys(data.data).length > 0) {
           const vindo = data.data;
-          setD({ ...PADRAO, ...vindo, dias: normalizarDias(vindo.dias) });
+          setD(migrarParaAbsoluto({ ...PADRAO, ...vindo, dias: normalizarDias(vindo.dias) }));
         }
       } catch (err) {
         console.error('Erro ao carregar:', err);
@@ -183,7 +225,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         (payload) => {
           if (payload.new && payload.new.data) {
             const vindo = payload.new.data;
-            setD({ ...PADRAO, ...vindo, dias: normalizarDias(vindo.dias) });
+            setD(migrarParaAbsoluto({ ...PADRAO, ...vindo, dias: normalizarDias(vindo.dias) }));
           }
         }
       )
@@ -195,69 +237,96 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const hojeChave = chaveDia(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
   // O controle começa sozinho no primeiro mês em que existe algo preenchido —
   // seja um valor de ganho/conta ou um lançamento no calendário.
-  const mesInicial = useMemo(() => {
+  // Primeiro mês com algo preenchido (em absoluto). O controle começa sozinho ali.
+  const mesInicialAbs = useMemo(() => {
     let menor = null;
     const considerar = (m) => { if (m !== null && (menor === null || m < menor)) menor = m; };
 
     ['rendas', 'fixos', 'contasVariaveis'].forEach((chave) => {
       (d[chave] || []).forEach((item) => {
-        Object.entries(item.valores || {}).forEach(([m, v]) => {
-          if (num(v) > 0) considerar(Number(m));
-        });
+        Object.entries(item.valores || {}).forEach(([m, v]) => { if (num(v) > 0) considerar(Number(m)); });
       });
     });
 
     (d.parcelas || []).forEach((p) => {
-      if (num(p.valor) > 0 && Number(p.quantidade) > 0) considerar(Number(p.mesInicio ?? 0));
+      if (num(p.valor) > 0 && Number(p.quantidade) > 0) considerar(Number(p.mesInicio));
     });
 
     Object.entries(d.dias || {}).forEach(([k, reg]) => {
-      const temValor = (reg?.lancamentos || []).some((l) => num(l.valor) > 0);
-      if (!temValor) return;
+      if (!(reg?.lancamentos || []).some((l) => num(l.valor) > 0)) return;
       const [ano, mesTexto] = k.split('-');
-      if (Number(ano) !== d.ano) return;
-      considerar(Number(mesTexto) - 1);
+      considerar(absMes(Number(ano), Number(mesTexto) - 1));
     });
 
     if (menor !== null) return menor;
+    return absMes(hoje.getFullYear(), hoje.getMonth());
+  }, [d]);
 
-    // dados antigos, com valor base sem mês associado: mantém o que já estava salvo
-    const temValorBase = ['rendas', 'fixos', 'contasVariaveis']
-      .some((chave) => (d[chave] || []).some((item) => num(item.valor) > 0));
-    if (temValorBase && d.mesInicial != null) return d.mesInicial;
+  // Até onde calcular: cobre os dados existentes, as parcelas em aberto e o ano seguinte.
+  const mesFinalAbs = useMemo(() => {
+    let maior = absMes(hoje.getFullYear() + 1, 11);
+    const considerar = (m) => { if (m > maior) maior = m; };
 
-    return hoje.getMonth();
+    (d.parcelas || []).forEach((p) => {
+      const qtd = Number(p.quantidade || 0);
+      if (qtd > 0 && num(p.valor) > 0) considerar(Number(p.mesInicio) + qtd - 1);
+    });
+    Object.keys(d.dias || {}).forEach((k) => {
+      const [ano, mesTexto] = k.split('-');
+      considerar(absMes(Number(ano), Number(mesTexto) - 1));
+    });
+    ['rendas', 'fixos', 'contasVariaveis'].forEach((chave) => {
+      (d[chave] || []).forEach((item) => {
+        Object.keys(item.valores || {}).forEach((k) => considerar(Number(k)));
+      });
+    });
+
+    // teto de segurança: no máximo 5 anos a partir do início
+    return Math.min(maior, mesInicialAbs + 12 * 5 - 1);
+  }, [d, mesInicialAbs]);
+
+  const anosDisponiveis = useMemo(() => {
+    const lista = [];
+    for (let a = anoDe(mesInicialAbs); a <= anoDe(mesFinalAbs); a++) lista.push(a);
+    return lista;
+  }, [mesInicialAbs, mesFinalAbs]);
+
+  const temAlgumDado = useMemo(() => {
+    const temItem = ['rendas', 'fixos', 'contasVariaveis'].some((chave) =>
+      (d[chave] || []).some((item) =>
+        num(item.valor) > 0 || Object.values(item.valores || {}).some((v) => num(v) > 0)
+      )
+    );
+    if (temItem) return true;
+    if ((d.parcelas || []).some((p) => num(p.valor) > 0)) return true;
+    return Object.values(d.dias || {}).some((reg) =>
+      (reg?.lancamentos || []).some((l) => num(l.valor) > 0)
+    );
   }, [d]);
 
   const calc = useMemo(() => {
     const saldos = {};
-    const mesesInfo = [];
+    const porMes = {}; // indexado pelo mês absoluto — o saldo atravessa dezembro
     let saldo = 0;
 
-
-    for (let m = 0; m < 12; m++) {
-      const antes = m < mesInicial;
-      const total = diasNoMes(d.ano, m);
-
-      if (antes) {
-        for (let dia = 1; dia <= total; dia++) saldos[chaveDia(d.ano, m, dia)] = 0;
-        mesesInfo.push({ abertura: 0, ganhos: 0, fixos: 0, baseDia: 0, variaveis: 0, parcelas: 0, sobra: 0, fim: 0, cats: {}, dias: total });
-        continue;
-      }
+    for (let abs = mesInicialAbs; abs <= mesFinalAbs; abs++) {
+      const ano = anoDe(abs);
+      const m = mesDe(abs);
+      const total = diasNoMes(ano, m);
 
       const abertura = saldo;
-      const ganhosTotal = d.rendas.reduce((acc, r) => acc + num(valorNoMes(r, m)), 0);
-      const fixosTotal = d.fixos.reduce((acc, f) => acc + num(valorNoMes(f, m)), 0);
-      const ativasNoMes = parcelasDoMes(d.parcelas, m);
-      const parcelasTotal = ativasNoMes.reduce((acc, p) => acc + num(p.valor), 0);
-      // parcela é dinheiro já comprometido, então entra na base diária como conta fixa
+      const ganhosTotal = d.rendas.reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0);
+      const fixosTotal = d.fixos.reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0);
+      const ativasNoMes = parcelasDoMes(d.parcelas, abs);
+      const parcelasTotal = ativasNoMes.reduce((acc, x) => acc + num(x.valor), 0);
       const baseDia = total > 0 ? (ganhosTotal - fixosTotal - parcelasTotal) / total : 0;
+
       let variaveis = 0;
       let entradasAvulsasMes = 0;
       const cats = {};
 
       for (let dia = 1; dia <= total; dia++) {
-        const k = chaveDia(d.ano, m, dia);
+        const k = chaveDia(ano, m, dia);
         const reg = d.dias[k] || {};
         const lancs = Array.isArray(reg.lancamentos) ? reg.lancamentos : [];
         let avulso = 0;
@@ -265,18 +334,17 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         lancs.forEach((l) => {
           const v = num(l.valor);
           if (v <= 0) return;
-          if (l.tipo === 'entrada') entradaAvulsa += v;
-          else avulso += v;
+          if (l.tipo === 'entrada') entradaAvulsa += v; else avulso += v;
         });
 
-        const ent = d.rendas.reduce((acc, r) => (Number(r.dia) === dia ? acc + num(valorNoMes(r, m)) : acc), 0);
-        const fix = d.fixos.reduce((acc, f) => (Number(f.dia) === dia ? acc + num(valorNoMes(f, m)) : acc), 0);
-        const par = ativasNoMes.reduce((acc, p) => (Number(p.dia) === dia ? acc + num(p.valor) : acc), 0);
+        const ent = d.rendas.reduce((acc, x) => (Number(x.dia) === dia ? acc + num(valorNoMes(x, abs)) : acc), 0);
+        const fix = d.fixos.reduce((acc, x) => (Number(x.dia) === dia ? acc + num(valorNoMes(x, abs)) : acc), 0);
+        const par = ativasNoMes.reduce((acc, x) => (Number(x.dia) === dia ? acc + num(x.valor) : acc), 0);
 
         let varPlanejada = 0;
         d.contasVariaveis.forEach((x) => {
           if (Number(x.dia) === dia) {
-            const val = num(valorNoMes(x, m));
+            const val = num(valorNoMes(x, abs));
             varPlanejada += val;
             if (val > 0) {
               const c = (x.categoria && x.categoria.trim()) || (x.nome && x.nome.trim()) || 'Sem categoria';
@@ -294,39 +362,42 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           const c = (l.categoria && l.categoria.trim()) || 'Sem categoria';
           cats[c] = (cats[c] || 0) + v;
         });
+
         variaveis += varPlanejada + avulso;
         entradasAvulsasMes += entradaAvulsa;
       }
 
-      mesesInfo.push({
-        abertura, ganhos: ganhosTotal + entradasAvulsasMes, fixos: fixosTotal, baseDia, variaveis,
+      porMes[abs] = {
+        abertura,
+        ganhos: ganhosTotal + entradasAvulsasMes,
+        fixos: fixosTotal,
         parcelas: parcelasTotal,
+        baseDia,
+        variaveis,
         sobra: ganhosTotal + entradasAvulsasMes - fixosTotal - parcelasTotal - variaveis,
-        fim: saldo, cats, dias: total,
-        variaveisPlanejadas: d.contasVariaveis.reduce((acc, v) => acc + num(valorNoMes(v, m)), 0),
-      });
+        fim: saldo,
+        cats,
+        dias: total,
+        variaveisPlanejadas: d.contasVariaveis.reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0),
+      };
     }
-    return { saldos, mesesInfo };
-  }, [d]);
 
-  const temAlgumDado = useMemo(() => {
-    const temItem = ['rendas', 'fixos', 'contasVariaveis'].some((chave) =>
-      (d[chave] || []).some((item) =>
-        num(item.valor) > 0 || Object.values(item.valores || {}).some((v) => num(v) > 0)
-      )
-    );
-    if (temItem) return true;
-    if ((d.parcelas || []).some((p) => num(p.valor) > 0)) return true;
-    return Object.values(d.dias || {}).some((reg) =>
-      (reg?.lancamentos || []).some((l) => num(l.valor) > 0)
-    );
-  }, [d]);
+    return { saldos, porMes };
+  }, [d, mesInicialAbs, mesFinalAbs]);
 
-  const r = calc.mesesInfo[mes];
+  const absVisto = absMes(anoVisto, mes);
+  const antesDoInicio = absVisto < mesInicialAbs;
+  const anoAtual = hoje.getFullYear();
+  const outroAno = anoVisto !== anoAtual;
+
+  const mesVazio = {
+    abertura: 0, ganhos: 0, fixos: 0, parcelas: 0, baseDia: 0, variaveis: 0,
+    sobra: 0, fim: 0, cats: {}, dias: diasNoMes(anoVisto, mes), variaveisPlanejadas: 0,
+  };
+  const r = calc.porMes[absVisto] || mesVazio;
   const totalDias = r.dias;
   const mediaGasta = totalDias > 0 ? r.variaveis / totalDias : 0;
   const noRitmo = mediaGasta <= r.baseDia;
-  const antesDoInicio = mes < mesInicial;
 
   // categorias já usadas, para sugerir na lista
   const categoriasUsadas = useMemo(() => {
@@ -346,7 +417,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const setValorDoMes = (lista, id, valor) =>
     setD((p) => ({
       ...p,
-      [lista]: p[lista].map((i) => (i.id === id ? { ...i, valores: { ...(i.valores || {}), [mes]: valor } } : i)),
+      [lista]: p[lista].map((i) => (i.id === id ? { ...i, valores: { ...(i.valores || {}), [absVisto]: valor } } : i)),
     }));
 
   // remove o valor próprio do mês, voltando a herdar do mês anterior
@@ -356,7 +427,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       [lista]: p[lista].map((i) => {
         if (i.id !== id) return i;
         const valores = { ...(i.valores || {}) };
-        delete valores[mes];
+        delete valores[absVisto];
         return { ...i, valores };
       }),
     }));
@@ -364,7 +435,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const listaDoDia = (p, k) => (Array.isArray(p.dias[k]?.lancamentos) ? p.dias[k].lancamentos : []);
 
   const addLancamento = (dia, tipo = 'saida') => {
-    const k = chaveDia(d.ano, mes, dia);
+    const k = chaveDia(anoVisto, mes, dia);
     setD((p) => ({
       ...p,
       dias: {
@@ -375,7 +446,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   };
 
   const setLancamento = (dia, id, campo, valor) => {
-    const k = chaveDia(d.ano, mes, dia);
+    const k = chaveDia(anoVisto, mes, dia);
     setD((p) => ({
       ...p,
       dias: {
@@ -386,7 +457,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   };
 
   const delLancamento = (dia, id) => {
-    const k = chaveDia(d.ano, mes, dia);
+    const k = chaveDia(anoVisto, mes, dia);
     setD((p) => {
       const restante = listaDoDia(p, k).filter((l) => l.id !== id);
       const dias = { ...p.dias };
@@ -402,7 +473,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       [lista]: [...p[lista], {
         id: `${lista}${Date.now()}`, nome: "", dia: 10, valor: "",
         ...(lista === 'contasVariaveis' ? { categoria: "" } : {}),
-        ...(lista === 'parcelas' ? { quantidade: 12, mesInicio: mes } : {}),
+        ...(lista === 'parcelas' ? { quantidade: 12, mesInicio: absVisto } : {}),
       }],
     }));
   const delLinha = (lista, id) => setD((p) => ({ ...p, [lista]: p[lista].filter((i) => i.id !== id) }));
@@ -420,7 +491,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const catsOrdenadas = Object.entries(r.cats).sort((a, b) => b[1] - a[1]);
   const maxCat = catsOrdenadas.length ? catsOrdenadas[0][1] : 1;
   const totalCats = catsOrdenadas.reduce((s, [, v]) => s + v, 0);
-  const maxMes = Math.max(1, ...Array.from({ length: totalDias }, (_, i) => Math.abs(calc.saldos[chaveDia(d.ano, mes, i + 1)] || 0)));
+  const maxMes = Math.max(1, ...Array.from({ length: totalDias }, (_, i) => Math.abs(calc.saldos[chaveDia(anoVisto, mes, i + 1)] || 0)));
 
   const faixa = (v) => {
     if (v < 0) return { bg: C.rosePale, fg: C.rose, barra: C.rose };
@@ -439,9 +510,9 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   // ── linhas do mês, usadas tanto na tabela (desktop) quanto nos cartões (celular) ──
   const linhasDoMes = Array.from({ length: totalDias }, (_, i) => {
     const dia = i + 1;
-    const k = chaveDia(d.ano, mes, dia);
+    const k = chaveDia(anoVisto, mes, dia);
     const reg = d.dias[k] || {};
-    const sem = new Date(d.ano, mes, dia).getDay();
+    const sem = new Date(anoVisto, mes, dia).getDay();
     const lancs = Array.isArray(reg.lancamentos) ? reg.lancamentos : [];
     return {
       dia, k, reg, lancs,
@@ -451,10 +522,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       sem,
       fds: sem === 0 || sem === 6,
       ehHoje: k === hojeChave,
-      ents: antesDoInicio ? [] : d.rendas.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
-      fixs: antesDoInicio ? [] : d.fixos.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
-      vars: antesDoInicio ? [] : d.contasVariaveis.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, mes)) > 0),
-      pars: antesDoInicio ? [] : parcelasDoMes(d.parcelas, mes).filter((x) => Number(x.dia) === dia),
+      ents: antesDoInicio ? [] : d.rendas.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
+      fixs: antesDoInicio ? [] : d.fixos.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
+      vars: antesDoInicio ? [] : d.contasVariaveis.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
+      pars: antesDoInicio ? [] : parcelasDoMes(d.parcelas, absVisto).filter((x) => Number(x.dia) === dia),
     };
   });
 
@@ -475,9 +546,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   return (
     <div style={{
-      background: C.paper,
+      background: outroAno ? C.azulPaper : C.paper,
       color: C.ink,
       minHeight: '100vh',
+      transition: 'background .25s ease',
       fontFamily: 'Inter, system-ui, sans-serif',
       padding: ehMobile ? '16px 12px 48px' : '20px 16px 56px',
       WebkitFontSmoothing: 'antialiased',
@@ -496,7 +568,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             fontFamily: "'IBM Plex Mono', monospace",
             fontSize: '11px', letterSpacing: '0.16em', textTransform: 'uppercase', color: C.soft,
           }}>
-            {d.ano} · Código: <strong>{familyCode}</strong>
+            Código: <strong>{familyCode}</strong>
           </div>
           <button
             onClick={onSair}
@@ -526,7 +598,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
         <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 16px', lineHeight: 1.6 }}>
           {temAlgumDado
-            ? `O controle começa em ${MESES[mesInicial].toLowerCase()} — o primeiro mês que você preencheu. Meses anteriores ficam zerados.`
+            ? `O controle começa em ${rotuloAbs(mesInicialAbs)} — o primeiro mês que você preencheu. Antes disso fica zerado.`
             : 'Preencha um ganho, uma conta ou um lançamento e o controle começa a contar daquele mês em diante.'}
         </p>
 
@@ -550,10 +622,77 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           </div>
           {antesDoInicio && (
             <div style={{ fontSize: '12px', color: C.soft, marginTop: '10px' }}>
-              Este mês fica zerado — o controle começa em {MESES[mesInicial].toLowerCase()}.
+              Este mês fica zerado — o controle começa em {rotuloAbs(mesInicialAbs)}.
             </div>
           )}
         </div>
+
+        {/* navegação de ano — o ano que não é o atual ganha tom azul, para ficar claro
+            que você saiu do presente sem mudar nada na experiência do ano corrente */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+          marginBottom: '14px',
+        }}>
+          {anosDisponiveis.map((a) => {
+            const ativo = a === anoVisto;
+            const ehAtual = a === anoAtual;
+            const corAtiva = ehAtual ? C.ink : C.azul;
+            return (
+              <button
+                key={a}
+                onClick={() => setAnoVisto(a)}
+                aria-pressed={ativo}
+                style={{
+                  border: `1px solid ${ativo ? corAtiva : C.rule}`,
+                  background: ativo ? corAtiva : 'transparent',
+                  color: ativo ? '#fff' : ehAtual ? C.ink : C.azulMedio,
+                  borderRadius: '20px', padding: '7px 15px', cursor: 'pointer',
+                  fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                  fontSize: '13px', fontWeight: 600, letterSpacing: '0.04em',
+                  display: 'inline-flex', alignItems: 'center', gap: '7px',
+                }}
+              >
+                {a}
+                {!ehAtual && (
+                  <span style={{
+                    fontFamily: 'Inter, sans-serif', fontSize: '9.5px', fontWeight: 500,
+                    letterSpacing: '0.08em', textTransform: 'uppercase',
+                    color: ativo ? 'rgba(255,255,255,.75)' : C.azulMedio,
+                  }}>
+                    {a > anoAtual ? 'futuro' : 'passado'}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {outroAno && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '10px',
+            border: `1px solid ${C.azulPale}`,
+            borderLeft: `4px solid ${C.azul}`,
+            background: C.azulBg,
+            borderRadius: '10px', padding: '11px 14px', marginBottom: '16px',
+          }}>
+            <span aria-hidden="true" style={{ fontSize: '15px', lineHeight: 1, color: C.azul }}>
+              {anoVisto > anoAtual ? '↗' : '↩'}
+            </span>
+            <div style={{ fontSize: '12.5px', color: C.azul, lineHeight: 1.55 }}>
+              Você está em <strong>{anoVisto}</strong>{anoVisto > anoAtual ? ' — projeção' : ' — histórico'}.
+              O saldo vem acumulado de {anoVisto - 1}, e as contas repetem o último valor informado.{' '}
+              <button
+                onClick={() => { setAnoVisto(anoAtual); setMes(hoje.getMonth()); }}
+                style={{
+                  border: 0, background: 'transparent', color: C.azul, padding: 0,
+                  fontSize: '12.5px', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer',
+                }}
+              >
+                voltar para {anoAtual}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={{ marginBottom: '16px' }}>
           <div style={{
@@ -562,9 +701,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           }}>
             <span style={{
               fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
-              letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
+              letterSpacing: '0.12em', textTransform: 'uppercase',
+              color: outroAno ? C.azulMedio : C.soft,
             }}>
-              Meses do ano
+              Meses de {anoVisto}
             </span>
             <span style={{
               display: 'flex', alignItems: 'center', gap: '6px',
@@ -585,9 +725,12 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
               }}
             >
               {MESES.map((m, i) => {
-                const v = calc.mesesInfo[i].fim;
+                const abs = absMes(anoVisto, i);
+                const info = calc.porMes[abs];
+                const v = info ? info.fim : 0;
                 const on = i === mes;
-                const desativado = i < mesInicial;
+                const desativado = abs < mesInicialAbs;
+                const corAtiva = outroAno ? C.azul : C.ink;
                 return (
                   <button
                     key={m}
@@ -595,8 +738,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                     onClick={() => setMes(i)}
                     style={{
                       flex: '1 0 auto', minWidth: '66px',
-                      border: `1px solid ${on ? C.ink : C.rule}`,
-                      background: on ? C.ink : 'transparent',
+                      border: `1px solid ${on ? corAtiva : C.rule}`,
+                      background: on ? corAtiva : 'transparent',
                       borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
                       opacity: desativado && !on ? 0.45 : 1,
                     }}
@@ -604,7 +747,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                     <div style={{
                       fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px',
                       letterSpacing: '0.1em', textTransform: 'uppercase',
-                      color: on ? '#AFC0B7' : C.soft,
+                      color: on ? 'rgba(255,255,255,.7)' : outroAno ? C.azulMedio : C.soft,
                     }}>
                       {ABREV[i]}
                     </div>
@@ -623,7 +766,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             {/* desbotado na borda direita: mostra que tem mais conteúdo para o lado */}
             <div aria-hidden="true" style={{
               position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
-              background: `linear-gradient(to right, rgba(238,240,234,0), ${C.paper})`,
+              background: `linear-gradient(to right, rgba(238,240,234,0), ${outroAno ? C.azulPaper : C.paper})`,
               pointerEvents: 'none',
             }} />
           </div>
@@ -668,7 +811,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           </div>
           <p style={{ fontSize: '12px', color: C.soft, marginTop: '10px', lineHeight: 1.6 }}>
             {antesDoInicio
-              ? `Mês anterior a ${MESES[mesInicial].toLowerCase()}, quando o controle começa.`
+              ? `Mês anterior a ${rotuloAbs(mesInicialAbs)}, quando o controle começa.`
               : r.variaveis > 0 ? (
                 <>
                   Você já gastou <strong style={{ color: noRitmo ? C.deep : C.rose }}>{brl(mediaGasta)} por dia</strong> em
@@ -727,7 +870,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 Ganhos, contas e parcelas
               </h2>
               <p style={{ fontSize: '12px', color: C.soft, margin: '3px 0 0' }}>
-                Os valores são de <strong>{MESES[mes].toLowerCase()}</strong>. Se você não mexer num mês,
+                Os valores são de <strong>{MESES[mes].toLowerCase()}{outroAno ? ` de ${anoVisto}` : ''}</strong>. Se você não mexer num mês,
                 ele repete o valor do mês anterior — então só edite quando a conta mudar.
               </p>
             </div>
@@ -753,7 +896,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   onDia={(id, v) => setPadrao('rendas', id, 'dia', v)}
                   onValor={(id, v) => setValorDoMes('rendas', id, v)}
                   onHerdar={(id) => voltarAHerdar('rendas', id)}
-                  mes={mes}
+                  mes={absVisto}
                   onDel={(id) => delLinha('rendas', id)}
                   onReordenar={(de, para) => reordenar('rendas', de, para)}
                 />
@@ -769,7 +912,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   onDia={(id, v) => setPadrao('fixos', id, 'dia', v)}
                   onValor={(id, v) => setValorDoMes('fixos', id, v)}
                   onHerdar={(id) => voltarAHerdar('fixos', id)}
-                  mes={mes}
+                  mes={absVisto}
                   onDel={(id) => delLinha('fixos', id)}
                   onReordenar={(de, para) => reordenar('fixos', de, para)}
                 />
@@ -791,7 +934,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   onDia={(id, v) => setPadrao('contasVariaveis', id, 'dia', v)}
                   onValor={(id, v) => setValorDoMes('contasVariaveis', id, v)}
                   onHerdar={(id) => voltarAHerdar('contasVariaveis', id)}
-                  mes={mes}
+                  mes={absVisto}
                   onCategoria={(id, v) => setPadrao('contasVariaveis', id, 'categoria', v)}
                   onDel={(id) => delLinha('contasVariaveis', id)}
                   onReordenar={(de, para) => reordenar('contasVariaveis', de, para)}
@@ -809,8 +952,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   itens={d.parcelas || []}
                   exemploNome="ex: Geladeira"
                   comParcelas
-                  mes={mes}
-                  ano={d.ano}
+                  mes={absVisto}
+                  ano={anoVisto}
                   onNome={(id, v) => setPadrao('parcelas', id, 'nome', v)}
                   onDia={(id, v) => setPadrao('parcelas', id, 'dia', v)}
                   onValor={(id, v) => setPadrao('parcelas', id, 'valor', v)}
@@ -820,7 +963,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   onReordenar={(de, para) => reordenar('parcelas', de, para)}
                 />
                 <BotaoAdd onClick={() => addLinha('parcelas')}>+ Outra compra parcelada</BotaoAdd>
-                <Total label={`Parcelas em ${MESES[mes].toLowerCase()}`} valor={brl(r.parcelas ?? 0)} cor={C.clay} />
+                <Total label={`Parcelas em ${MESES[mes].toLowerCase()}${outroAno ? ` de ${anoVisto}` : ""}`} valor={brl(r.parcelas ?? 0)} cor={C.clay} />
               </Bloco>
             </>
           )}
@@ -831,7 +974,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           fontFamily: "'Bricolage Grotesque', system-ui",
           fontSize: 'clamp(22px, 4.4vw, 30px)', fontWeight: 800, marginBottom: '4px',
         }}>
-          {MESES[mes]}
+          {MESES[mes]}{outroAno ? ` de ${anoVisto}` : ''}
         </h2>
         <p style={{ fontSize: '12px', color: C.soft, marginBottom: '12px' }}>
           Adicione quantos lançamentos quiser em cada dia. O resto entra sozinho.
@@ -899,10 +1042,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
                     {temAuto > 0 && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
-                        {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, mes)))}`, C.pale, C.deep)}</React.Fragment>)}
-                        {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, mes)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
-                        {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, mes)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
-                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, mes)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
+                        {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, C.pale, C.deep)}</React.Fragment>)}
+                        {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                        {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
                       </div>
                     )}
 
@@ -967,10 +1110,10 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                         </td>
                         <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left', verticalAlign: 'top' }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, mes)))}`, C.pale, C.deep)}</React.Fragment>)}
-                            {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, mes)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
-                            {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, mes)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
-                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, mes)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
+                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, C.pale, C.deep)}</React.Fragment>)}
+                            {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                            {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
                           </div>
                         </td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid #E2E6DE', verticalAlign: 'top' }}>
@@ -1072,12 +1215,14 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
               fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
               fontSize: '16px', letterSpacing: '-0.01em', margin: '0 0 3px',
             }}>
-              Fechamento de cada mês
+              Fechamento de cada mês de {anoVisto}
             </h2>
             <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 14px' }}>Saldo no último dia.</p>
             {MESES.map((m, i) => {
-              const x = calc.mesesInfo[i];
-              const maxAno = Math.max(1, ...calc.mesesInfo.map((y) => Math.abs(y.fim)));
+              const absI = absMes(anoVisto, i);
+              const x = calc.porMes[absI] || { fim: 0 };
+              const doAno = MESES.map((_, j) => calc.porMes[absMes(anoVisto, j)]?.fim || 0);
+              const maxAno = Math.max(1, ...doAno.map((y) => Math.abs(y)));
               return (
                 <div
                   key={m}
@@ -1085,7 +1230,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   style={{
                     display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px', alignItems: 'center',
                     padding: '7px 0', borderBottom: '1px solid #E4E8E0', cursor: 'pointer',
-                    opacity: i < mesInicial ? 0.5 : 1,
+                    opacity: absI < mesInicialAbs ? 0.5 : 1,
                   }}
                 >
                   <div>
@@ -1336,7 +1481,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
                   {origem.proprio ? (
                     <>
                       <span style={{ color: C.deep }}>valor deste mês</span>
-                      {origem.de !== 0 && (
+                      {origem.de > 0 && (
                         <button
                           onClick={() => onHerdar?.(item.id)}
                           style={{
@@ -1349,7 +1494,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
                       )}
                     </>
                   ) : (
-                    <span>repetindo o valor de {MESES[origem.de].toLowerCase()}</span>
+                    <span>repetindo o valor de {rotuloAbs(origem.de)}</span>
                   )}
                 </div>
               )}
@@ -1357,11 +1502,15 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
               {comParcelas && (() => {
                 const qtd = Number(item.quantidade || 0);
                 const ini = Number(item.mesInicio ?? 0);
-                const fimIdx = ini + qtd - 1;
-                const passaDoAno = fimIdx > 11;
-                const restamNoAno = Math.max(0, Math.min(fimIdx, 11) - ini + 1);
+                const fimAbs = ini + qtd - 1;
                 const numAtual = mes - ini + 1;
                 const ativa = qtd > 0 && numAtual >= 1 && numAtual <= qtd;
+                const anoIni = anoDe(ini);
+                // opções de mês cobrindo do ano anterior ao ano seguinte
+                const opcoes = [];
+                for (let a = (ano ?? anoIni) - 1; a <= (ano ?? anoIni) + 2; a++) {
+                  for (let mm = 0; mm < 12; mm++) opcoes.push(absMes(a, mm));
+                }
                 return (
                   <>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
@@ -1397,7 +1546,9 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
                           color: C.ink, flex: '1 1 auto', minWidth: 0,
                         }}
                       >
-                        {MESES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                        {opcoes.map((abs) => (
+                          <option key={abs} value={abs}>{MESES[mesDe(abs)]} {anoDe(abs)}</option>
+                        ))}
                       </select>
                     </div>
 
@@ -1406,15 +1557,9 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
                         {qtd}x de {brl(num(item.valor))} = <strong style={{ color: C.clay }}>{brl(num(item.valor) * qtd)}</strong>
                         {' · '}
                         {ativa
-                          ? `${numAtual}ª em ${MESES[mes].toLowerCase()}`
-                          : (mes < ini ? `começa em ${MESES[ini].toLowerCase()}` : 'já quitada')}
-                        {!passaDoAno && ` · termina em ${MESES[fimIdx]?.toLowerCase()}`}
-                        {passaDoAno && (
-                          <span style={{ display: 'block', color: C.rose, marginTop: '3px' }}>
-                            {restamNoAno} {restamNoAno === 1 ? 'parcela cai' : 'parcelas caem'} em {ano};
-                            as {qtd - restamNoAno} restantes ficam para {ano + 1} e ainda não aparecem aqui.
-                          </span>
-                        )}
+                          ? `${numAtual}ª parcela`
+                          : (mes < ini ? `começa em ${rotuloAbs(ini)}` : 'já quitada')}
+                        {` · termina em ${rotuloAbs(fimAbs)}`}
                       </div>
                     )}
                   </>
