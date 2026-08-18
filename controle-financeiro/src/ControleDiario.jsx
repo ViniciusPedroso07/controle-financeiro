@@ -14,11 +14,15 @@ const C = {
   amber: '#B4832A',
   steel: '#48607A',
   clay: '#8C5A3C',
-  azul: '#2E5C86',
-  azulMedio: '#4A7BA8',
-  azulPale: '#D6E3EF',
-  azulBg: '#E9F0F7',
-  azulPaper: '#E8EDF2',
+  azul: '#1E4A73',
+  azulMedio: '#3A6E9E',
+  azulPale: '#CFE0EE',
+  azulBg: '#E3EDF6',
+  azulPaper: '#E7EDF3',
+  azulCard: '#F1F5F9',
+  azulRule: '#C4D4E3',
+  vinho: '#7A2E3E',
+  vinhoClaro: '#A34558',
 };
 
 const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
@@ -153,7 +157,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const [anoVisto, setAnoVisto] = useState(new Date().getFullYear());
   const [carregando, setCarregando] = useState(true);
   const [aviso, setAviso] = useState("");
-  const [abrirPainel, setAbrirPainel] = useState(true);
+  const [secoes, setSecoes] = useState({ contas: true, calendario: true, ranking: true, fechamento: true });
+  const alternar = (chave) => setSecoes((p) => ({ ...p, [chave]: !p[chave] }));
   const [ehMobile, setEhMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 760 : false);
   const syncRef = useRef(null);
   const trilhaRef = useRef(null);
@@ -390,6 +395,13 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const anoAtual = hoje.getFullYear();
   const outroAno = anoVisto !== anoAtual;
 
+  // Fora do ano atual, a interface inteira muda para azul — inclusive as cores
+  // do dinheiro — para não haver dúvida de que você não está no presente.
+  // As seções de ganhos, contas e parcelas mantêm as cores próprias.
+  const T = outroAno
+    ? { paper: C.azulPaper, card: C.azulCard, rule: C.azulRule, forte: C.azul, medio: C.azulMedio, pale: C.azulPale, baseBg: C.azulBg, cabecalho: '#DCE7F1' }
+    : { paper: C.paper, card: C.card, rule: C.rule, forte: C.deep, medio: C.mid, pale: C.pale, baseBg: '#E7F0E9', cabecalho: '#E7EAE2' };
+
   const mesVazio = {
     abertura: 0, ganhos: 0, fixos: 0, parcelas: 0, baseDia: 0, variaveis: 0,
     sobra: 0, fim: 0, cats: {}, dias: diasNoMes(anoVisto, mes), variaveisPlanejadas: 0,
@@ -495,8 +507,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   const faixa = (v) => {
     if (v < 0) return { bg: C.rosePale, fg: C.rose, barra: C.rose };
-    if (v >= maxMes * 0.5) return { bg: C.deep, fg: "#EEF0EA", barra: "#EEF0EA" };
-    return { bg: C.pale, fg: C.deep, barra: C.mid };
+    if (v >= maxMes * 0.5) return { bg: T.forte, fg: '#FFFFFF', barra: '#FFFFFF' };
+    return { bg: T.pale, fg: T.forte, barra: T.medio };
   };
 
   if (carregando) {
@@ -546,7 +558,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   return (
     <div style={{
-      background: outroAno ? C.azulPaper : C.paper,
+      background: T.paper,
       color: C.ink,
       minHeight: '100vh',
       transition: 'background .25s ease',
@@ -604,7 +616,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
         {/* saldo do mês — centralizado, sem menção a quem usa */}
         <div style={{
-          border: `1px solid ${C.rule}`, background: C.card, borderRadius: '14px',
+          border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
           padding: ehMobile ? '20px 16px' : '26px 20px', margin: '18px 0', textAlign: 'center',
         }}>
           <div style={{
@@ -616,7 +628,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           <div style={{
             fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
             fontWeight: 600, fontSize: 'clamp(28px, 8vw, 44px)', lineHeight: 1,
-            color: r.fim < 0 ? C.rose : C.deep,
+            color: r.fim < 0 ? C.rose : T.forte,
           }}>
             {brl(r.fim)}
           </div>
@@ -653,15 +665,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 }}
               >
                 {a}
-                {!ehAtual && (
-                  <span style={{
-                    fontFamily: 'Inter, sans-serif', fontSize: '9.5px', fontWeight: 500,
-                    letterSpacing: '0.08em', textTransform: 'uppercase',
-                    color: ativo ? 'rgba(255,255,255,.75)' : C.azulMedio,
-                  }}>
-                    {a > anoAtual ? 'futuro' : 'passado'}
-                  </span>
-                )}
               </button>
             );
           })}
@@ -754,7 +757,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                     <div style={{
                       fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
                       fontSize: '13px', fontWeight: 600, marginTop: '3px',
-                      color: on ? (v < 0 ? '#F0A9A3' : '#8FD9BE') : v < 0 ? C.rose : C.deep,
+                      color: on ? (v < 0 ? '#F0A9A3' : outroAno ? '#A8CBE8' : '#8FD9BE') : v < 0 ? C.rose : T.forte,
                     }}>
                       {curto(v)}
                     </div>
@@ -766,7 +769,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             {/* desbotado na borda direita: mostra que tem mais conteúdo para o lado */}
             <div aria-hidden="true" style={{
               position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
-              background: `linear-gradient(to right, rgba(238,240,234,0), ${outroAno ? C.azulPaper : C.paper})`,
+              background: `linear-gradient(to right, rgba(255,255,255,0), ${T.paper})`,
               pointerEvents: 'none',
             }} />
           </div>
@@ -783,7 +786,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
         {/* base por dia */}
         <div style={{
-          border: `1px solid ${C.pale}`, background: '#E7F0E9', borderRadius: '12px',
+          border: `1px solid ${T.pale}`, background: T.baseBg, borderRadius: '12px',
           padding: '16px 18px', marginBottom: '18px',
         }}>
           <div style={{
@@ -795,7 +798,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           <div style={{
             fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
             fontSize: 'clamp(24px, 5vw, 32px)', fontWeight: 600, lineHeight: 1, marginTop: '6px',
-            color: r.baseDia < 0 ? C.rose : C.deep,
+            color: r.baseDia < 0 ? C.rose : T.forte,
           }}>
             {brl(r.baseDia)}
             <span style={{ fontFamily: 'Inter, sans-serif', fontSize: 14, fontWeight: 400, color: C.soft, marginLeft: 12 }}>
@@ -814,7 +817,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
               ? `Mês anterior a ${rotuloAbs(mesInicialAbs)}, quando o controle começa.`
               : r.variaveis > 0 ? (
                 <>
-                  Você já gastou <strong style={{ color: noRitmo ? C.deep : C.rose }}>{brl(mediaGasta)} por dia</strong> em
+                  Você já gastou <strong style={{ color: noRitmo ? T.forte : C.rose }}>{brl(mediaGasta)} por dia</strong> em
                   média este mês — {noRitmo ? 'dentro da base.' : 'acima da base.'}
                 </>
               ) : 'Lance os gastos na tabela e este número ganha um comparativo do quanto você está gastando de verdade.'}
@@ -828,14 +831,14 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         }}>
           {[
             { lab: "Vem do mês anterior", val: brl(r.abertura), cor: r.abertura < 0 ? C.rose : C.ink },
-            { lab: "Ganhos", val: brl(r.ganhos), cor: C.deep },
+            { lab: "Ganhos", val: brl(r.ganhos), cor: T.forte },
             { lab: "Contas fixas", val: brl(r.fixos), cor: C.steel },
             { lab: "Parcelas", val: brl(r.parcelas ?? 0), cor: C.clay },
             { lab: "Variáveis", val: brl(r.variaveis), cor: C.amber },
-            { lab: "Sobra do mês", val: brl(r.sobra), cor: r.sobra < 0 ? C.rose : C.deep },
+            { lab: "Sobra do mês", val: brl(r.sobra), cor: r.sobra < 0 ? C.rose : T.forte },
           ].map((box, i) => (
             <div key={i} style={{
-              border: `1px solid ${C.rule}`, background: C.card, borderRadius: '11px', padding: '12px 13px',
+              border: `1px solid ${T.rule}`, background: T.card, borderRadius: '11px', padding: '12px 13px',
             }}>
               <div style={{
                 fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
@@ -855,38 +858,18 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
         {/* painel dos três blocos */}
         <div style={{
-          border: `1px solid ${C.rule}`, background: C.card, borderRadius: '14px',
+          border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
           padding: ehMobile ? '14px' : '16px 18px', marginBottom: '18px',
         }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            gap: '12px', flexWrap: 'wrap', marginBottom: '16px',
-          }}>
-            <div>
-              <h2 style={{
-                fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
-                fontSize: '16px', letterSpacing: '-0.01em', margin: '0 0 3px',
-              }}>
-                Ganhos, contas e parcelas
-              </h2>
-              <p style={{ fontSize: '12px', color: C.soft, margin: '3px 0 0' }}>
-                Os valores são de <strong>{MESES[mes].toLowerCase()}{outroAno ? ` de ${anoVisto}` : ''}</strong>. Se você não mexer num mês,
-                ele repete o valor do mês anterior — então só edite quando a conta mudar.
-              </p>
-            </div>
-            <button
-              onClick={() => setAbrirPainel(!abrirPainel)}
-              style={{
-                border: `1px solid ${C.rule}`, background: 'transparent', color: C.ink,
-                borderRadius: '9px', padding: '9px 14px', fontSize: '13px', fontWeight: 500,
-                cursor: 'pointer', whiteSpace: 'nowrap',
-              }}
-            >
-              {abrirPainel ? 'Fechar' : 'Abrir'}
-            </button>
-          </div>
+          <CabecalhoSecao
+            titulo="Ganhos, contas e parcelas"
+            subtitulo={<>Os valores são de <strong>{MESES[mes].toLowerCase()}{outroAno ? ` de ${anoVisto}` : ''}</strong>. Se você não mexer num mês, ele repete o valor do mês anterior — então só edite quando a conta mudar.</>}
+            aberta={secoes.contas}
+            onToggle={() => alternar('contas')}
+            cor={T.forte}
+          />
 
-          {abrirPainel && (
+          {secoes.contas && (
             <>
               <Bloco cor={C.deep} fundo="#DCEEE4" titulo="Entra">
                 <TabelaItens
@@ -970,16 +953,40 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         </div>
 
         {/* calendário do mês */}
-        <h2 style={{
-          fontFamily: "'Bricolage Grotesque', system-ui",
-          fontSize: 'clamp(22px, 4.4vw, 30px)', fontWeight: 800, marginBottom: '4px',
-        }}>
-          {MESES[mes]}{outroAno ? ` de ${anoVisto}` : ''}
-        </h2>
-        <p style={{ fontSize: '12px', color: C.soft, marginBottom: '12px' }}>
-          Adicione quantos lançamentos quiser em cada dia. O resto entra sozinho.
-        </p>
+        <button
+          onClick={() => alternar('calendario')}
+          aria-expanded={secoes.calendario}
+          style={{
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+            gap: '12px', width: '100%', border: 0, background: 'transparent',
+            padding: 0, cursor: 'pointer', textAlign: 'left', marginBottom: '4px',
+          }}
+        >
+          <span>
+            <span style={{
+              display: 'block',
+              fontFamily: "'Bricolage Grotesque', system-ui",
+              fontSize: 'clamp(22px, 4.4vw, 30px)', fontWeight: 800, color: C.ink,
+            }}>
+              {MESES[mes]}{outroAno ? ` de ${anoVisto}` : ''}
+            </span>
+            <span style={{ display: 'block', fontSize: '12px', color: C.soft, marginTop: '4px' }}>
+              Adicione quantos lançamentos quiser em cada dia. O resto entra sozinho.
+            </span>
+          </span>
+          <span aria-hidden="true" style={{
+            flex: 'none', color: T.forte, fontSize: '11px', lineHeight: 1,
+            transform: secoes.calendario ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform .2s ease',
+          }}>
+            ▼
+          </span>
+        </button>
 
+        <div style={{ height: '12px' }} />
+
+        {secoes.calendario && (
+          <>
         {ehMobile ? (
           <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
             {linhasDoMes.map((L) => {
@@ -990,8 +997,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   display: 'flex',
                   alignItems: 'stretch',
                   gap: '12px',
-                  border: `1px solid ${L.ehHoje ? C.amber : C.rule}`,
-                  background: C.card,
+                  border: `1px solid ${L.ehHoje ? C.amber : T.rule}`,
+                  background: T.card,
                   borderRadius: '11px',
                   padding: '12px 13px',
                 }}>
@@ -1002,7 +1009,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'flex-start',
-                    borderRight: `1px solid ${C.rule}`,
+                    borderRight: `1px solid ${T.rule}`,
                     paddingRight: '10px',
                   }}>
                     <div style={{
@@ -1042,7 +1049,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
                     {temAuto > 0 && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
-                        {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, C.pale, C.deep)}</React.Fragment>)}
+                        {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
                         {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
                         {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
                             {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
@@ -1050,6 +1057,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                     )}
 
                     <Lancamentos
+                      tema={T}
                       lancs={L.lancs}
                       onCampo={(id, campo, v) => setLancamento(L.dia, id, campo, v)}
                       onDel={(id) => delLancamento(L.dia, id)}
@@ -1062,8 +1070,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           </div>
         ) : (
           <div style={{
-            border: `1px solid ${C.rule}`, borderRadius: '14px', overflow: 'hidden',
-            background: C.card, marginBottom: '18px',
+            border: `1px solid ${T.rule}`, borderRadius: '14px', overflow: 'hidden',
+            background: T.card, marginBottom: '18px',
           }}>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '680px' }}>
@@ -1074,7 +1082,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                         fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
                         letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
                         fontWeight: 500, textAlign: i === 3 ? 'right' : 'left',
-                        padding: '11px 10px', background: '#E7EAE2', borderBottom: `1px solid ${C.rule}`,
+                        padding: '11px 10px', background: T.cabecalho, borderBottom: `1px solid ${T.rule}`,
                         width: i === 2 ? '340px' : undefined,
                       }}>
                         {h}
@@ -1110,7 +1118,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                         </td>
                         <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left', verticalAlign: 'top' }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, C.pale, C.deep)}</React.Fragment>)}
+                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
                             {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
                             {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
                             {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
@@ -1118,6 +1126,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                         </td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid #E2E6DE', verticalAlign: 'top' }}>
                           <Lancamentos
+                            tema={T}
                             lancs={L.lancs}
                             onCampo={(id, campo, v) => setLancamento(L.dia, id, campo, v)}
                             onDel={(id) => delLancamento(L.dia, id)}
@@ -1141,6 +1150,9 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           </div>
         )}
 
+          </>
+        )}
+
         <datalist id="cd-categorias">
           {categoriasUsadas.map((c) => <option key={c} value={c} />)}
         </datalist>
@@ -1156,19 +1168,18 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           gap: '18px', marginTop: '18px',
         }}>
           <div style={{
-            border: `1px solid ${C.rule}`, background: C.card, borderRadius: '14px',
+            border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
             padding: ehMobile ? '14px' : '16px 18px',
           }}>
-            <h2 style={{
-              fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
-              fontSize: '16px', letterSpacing: '-0.01em', margin: '0 0 3px',
-            }}>
-              Para onde foi em {MESES[mes].toLowerCase()}
-            </h2>
-            <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 14px' }}>
-              Ranking por categoria — contas variáveis e gastos avulsos somados.
-            </p>
-            {catsOrdenadas.length === 0 ? (
+            <CabecalhoSecao
+              titulo={`Para onde foi em ${MESES[mes].toLowerCase()}`}
+              subtitulo="Ranking por categoria — contas variáveis e gastos avulsos somados."
+              aberta={secoes.ranking}
+              onToggle={() => alternar('ranking')}
+              cor={C.vinho}
+            />
+            <div style={{ height: '12px' }} />
+            {!secoes.ranking ? null : catsOrdenadas.length === 0 ? (
               <p style={{ fontSize: '12px', color: C.soft, lineHeight: 1.6 }}>
                 Nada lançado ainda. O primeiro gasto com categoria aparece aqui.
               </p>
@@ -1180,15 +1191,15 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 }}>
                   <div style={{
                     fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px',
-                    fontWeight: 700, color: idx === 0 ? C.amber : C.soft,
+                    fontWeight: 700, color: idx === 0 ? C.vinho : C.soft,
                   }}>
                     {idx + 1}º
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: '13px', fontWeight: idx === 0 ? 600 : 400 }}>{c}</div>
                     <div style={{
-                      height: '5px', borderRadius: '3px', background: C.amber, marginTop: '5px',
-                      width: `${Math.max(4, (v / maxCat) * 100)}%`, opacity: idx === 0 ? 0.85 : 0.5,
+                      height: '6px', borderRadius: '3px', background: C.vinho, marginTop: '5px',
+                      width: `${Math.max(4, (v / maxCat) * 100)}%`, opacity: idx === 0 ? 1 : 0.75,
                     }} />
                   </div>
                   <div style={{ textAlign: 'right' }}>
@@ -1208,17 +1219,18 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           </div>
 
           <div style={{
-            border: `1px solid ${C.rule}`, background: C.card, borderRadius: '14px',
+            border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
             padding: ehMobile ? '14px' : '16px 18px',
           }}>
-            <h2 style={{
-              fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
-              fontSize: '16px', letterSpacing: '-0.01em', margin: '0 0 3px',
-            }}>
-              Fechamento de cada mês de {anoVisto}
-            </h2>
-            <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 14px' }}>Saldo no último dia.</p>
-            {MESES.map((m, i) => {
+            <CabecalhoSecao
+              titulo={`Fechamento de cada mês de ${anoVisto}`}
+              subtitulo="Saldo no último dia."
+              aberta={secoes.fechamento}
+              onToggle={() => alternar('fechamento')}
+              cor={T.forte}
+            />
+            <div style={{ height: '12px' }} />
+            {secoes.fechamento && MESES.map((m, i) => {
               const absI = absMes(anoVisto, i);
               const x = calc.porMes[absI] || { fim: 0 };
               const doAno = MESES.map((_, j) => calc.porMes[absMes(anoVisto, j)]?.fim || 0);
@@ -1237,7 +1249,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                     <div style={{ fontSize: '13px', fontWeight: i === mes ? 600 : 400 }}>{m}</div>
                     <div style={{
                       height: '5px', borderRadius: '3px',
-                      background: x.fim < 0 ? C.rose : C.mid, marginTop: '5px',
+                      background: x.fim < 0 ? C.rose : T.medio, marginTop: '5px',
                       width: `${Math.max(3, (Math.abs(x.fim) / maxAno) * 100)}%`,
                     }} />
                   </div>
@@ -1254,6 +1266,47 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// Cabeçalho de seção: título, subtítulo e uma seta discreta para encolher/expandir.
+function CabecalhoSecao({ titulo, subtitulo, aberta, onToggle, cor }) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-expanded={aberta}
+      style={{
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+        gap: '12px', width: '100%', border: 0, background: 'transparent',
+        padding: 0, cursor: 'pointer', textAlign: 'left',
+      }}
+    >
+      <span style={{ minWidth: 0 }}>
+        <span style={{
+          display: 'block',
+          fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700,
+          fontSize: '16px', letterSpacing: '-0.01em', color: C.ink,
+        }}>
+          {titulo}
+        </span>
+        {subtitulo && (
+          <span style={{ display: 'block', fontSize: '12px', color: C.soft, marginTop: '3px', lineHeight: 1.5 }}>
+            {subtitulo}
+          </span>
+        )}
+      </span>
+      <span
+        aria-hidden="true"
+        style={{
+          flex: 'none', color: cor || C.soft, fontSize: '11px', lineHeight: 1,
+          marginTop: '5px',
+          transform: aberta ? 'rotate(180deg)' : 'rotate(0deg)',
+          transition: 'transform .2s ease',
+        }}
+      >
+        ▼
+      </span>
+    </button>
   );
 }
 
@@ -1608,7 +1661,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
 
 // Lançamentos avulsos de um dia. Dia vazio mostra só os dois botões de adicionar —
 // os campos aparecem conforme a pessoa adiciona, para o calendário não ficar carregado.
-function BotoesAdicionar({ onAdd, primeiro }) {
+function BotoesAdicionar({ onAdd, primeiro, corEntrada = C.deep }) {
   const base = {
     border: 0, background: 'transparent',
     fontSize: '12px', fontFamily: 'Inter, sans-serif',
@@ -1630,7 +1683,7 @@ function BotoesAdicionar({ onAdd, primeiro }) {
 
       <button
         onClick={() => onAdd('entrada')}
-        style={{ ...base, color: C.deep }}
+        style={{ ...base, color: corEntrada }}
         title="Adicionar uma entrada"
       >
         <span style={{ fontSize: '13px', lineHeight: 1, fontWeight: 700 }}>+</span>
@@ -1640,16 +1693,17 @@ function BotoesAdicionar({ onAdd, primeiro }) {
   );
 }
 
-function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
+function Lancamentos({ lancs, onCampo, onDel, onAdd, tema }) {
+  const T = tema || { forte: C.deep, pale: C.pale };
   if (!lancs.length) {
-    return <BotoesAdicionar onAdd={onAdd} primeiro />;
+    return <BotoesAdicionar onAdd={onAdd} corEntrada={T.forte} primeiro />;
   }
 
   return (
     <div style={{ display: 'grid', gap: '6px' }}>
       {lancs.map((l) => {
         const ehEntrada = l.tipo === 'entrada';
-        const cor = ehEntrada ? C.deep : C.rose;
+        const cor = ehEntrada ? T.forte : C.rose;
         return (
           <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
             {/* as duas opções ficam à vista: toque direto na que quiser */}
@@ -1680,8 +1734,8 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
                 style={{
                   width: '26px', height: '32px', border: 0, padding: 0, cursor: 'pointer',
                   borderLeft: `1px solid ${C.rule}`,
-                  background: ehEntrada ? C.pale : 'transparent',
-                  color: ehEntrada ? C.deep : 'rgba(99,115,108,.55)',
+                  background: ehEntrada ? T.pale : 'transparent',
+                  color: ehEntrada ? T.forte : 'rgba(99,115,108,.55)',
                   fontFamily: "'IBM Plex Mono', monospace",
                   fontSize: '14px', fontWeight: 700, lineHeight: 1,
                 }}
@@ -1739,7 +1793,7 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd }) {
         );
       })}
 
-      <BotoesAdicionar onAdd={onAdd} />
+      <BotoesAdicionar onAdd={onAdd} corEntrada={T.forte} />
     </div>
   );
 }
