@@ -781,19 +781,38 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                   <Caixa lab="Comprometido" val={brl(r.fixos + r.parcelas)} cor={C.steel} />
                 </div>
 
-                {ehMesCorrente && (
-                  <button onClick={() => setAba('calendario')} style={{
+                <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
+                  {ehMesCorrente && (
+                    <button onClick={() => setAba('calendario')} style={{
+                      width: '100%', border: `1px solid ${T.rule}`, background: T.card,
+                      borderRadius: '12px', padding: '13px 16px', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: '10px', textAlign: 'left',
+                    }}>
+                      <span style={{ fontSize: '13.5px', fontWeight: 600, color: C.ink }}>
+                        Lançar um gasto de hoje
+                      </span>
+                      <span aria-hidden="true" style={{ color: C.soft, fontSize: '14px' }}>→</span>
+                    </button>
+                  )}
+
+                  <button onClick={() => setAba('contas')} style={{
                     width: '100%', border: `1px solid ${T.rule}`, background: T.card,
                     borderRadius: '12px', padding: '13px 16px', cursor: 'pointer',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    gap: '10px', marginBottom: '18px', textAlign: 'left',
+                    gap: '10px', textAlign: 'left',
                   }}>
-                    <span style={{ fontSize: '13.5px', fontWeight: 600, color: C.ink }}>
-                      Lançar um gasto de hoje
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: '13.5px', fontWeight: 600, color: C.ink }}>
+                        Ver contas
+                      </span>
+                      <span style={{ display: 'block', fontSize: '11.5px', color: C.soft, marginTop: '2px' }}>
+                        Ganhos, fixas, variáveis e parcelas de {MESES[mes].toLowerCase()}
+                      </span>
                     </span>
-                    <span aria-hidden="true" style={{ color: C.soft, fontSize: '14px' }}>→</span>
+                    <span aria-hidden="true" style={{ color: C.soft, fontSize: '14px', flex: 'none' }}>→</span>
                   </button>
-                )}
+                </div>
 
                 {/* ranking */}
                 <div style={{
