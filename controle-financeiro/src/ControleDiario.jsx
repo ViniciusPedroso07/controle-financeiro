@@ -158,6 +158,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const [aviso, setAviso] = useState("");
   const [ehMobile, setEhMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 760 : false);
   const [secoes, setSecoes] = useState({ contas: true, ranking: true, fechamento: false });
+  const [listaMeses, setListaMeses] = useState(false);
   const alternar = (chave) => setSecoes((p) => ({ ...p, [chave]: !p[chave] }));
   const syncRef = useRef(null);
   const trilhaRef = useRef(null);
@@ -176,6 +177,8 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     const alvo = botao.offsetLeft - (trilha.clientWidth / 2) + (botao.clientWidth / 2);
     trilha.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
   }, [mes, anoVisto, carregando, ehMobile, aba]);
+
+  useEffect(() => { setListaMeses(false); }, [mes, anoVisto, aba]);
 
   useEffect(() => {
     const carregar = async () => {
@@ -554,9 +557,17 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         {/* ───── cabeçalho ───── */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-            <span style={{ fontFamily: "'Bricolage Grotesque', system-ui", fontWeight: 800, fontSize: '20px', letterSpacing: '-0.03em' }}>
+            <button
+              onClick={() => setAba('hoje')}
+              aria-label="Ir para a tela Hoje"
+              style={{
+                border: 0, background: 'transparent', padding: 0, cursor: 'pointer',
+                fontFamily: "'Bricolage Grotesque', system-ui", fontWeight: 800,
+                fontSize: '20px', letterSpacing: '-0.03em', color: C.ink,
+              }}
+            >
               Vistta
-            </span>
+            </button>
             <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '10.5px', letterSpacing: '0.14em', textTransform: 'uppercase', color: C.soft }}>
               {familyCode}
             </span>
@@ -881,14 +892,81 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         {aba === 'calendario' && (
           <>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
-              <div>
-                <h2 style={{ fontFamily: "'Bricolage Grotesque', system-ui", fontSize: 'clamp(20px, 4.4vw, 28px)', fontWeight: 800, margin: 0 }}>
-                  {MESES[mes]}{outroAno ? ` de ${anoVisto}` : ''}
-                </h2>
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setListaMeses(!listaMeses)}
+                  aria-expanded={listaMeses}
+                  aria-label="Escolher outro mês"
+                  style={{
+                    border: 0, background: 'transparent', padding: 0, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: '9px', textAlign: 'left',
+                  }}
+                >
+                  <span style={{
+                    fontFamily: "'Bricolage Grotesque', system-ui",
+                    fontSize: 'clamp(20px, 4.4vw, 28px)', fontWeight: 800, color: C.ink,
+                  }}>
+                    {MESES[mes]}{outroAno ? ` de ${anoVisto}` : ''}
+                  </span>
+                  <span aria-hidden="true" style={{
+                    color: T.forte, fontSize: '11px', lineHeight: 1,
+                    transform: listaMeses ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform .2s ease',
+                  }}>
+                    ▼
+                  </span>
+                </button>
                 <p style={{ fontSize: '12px', color: C.soft, margin: '4px 0 0' }}>
                   Adicione quantos lançamentos quiser em cada dia. O resto entra sozinho.
                 </p>
+
+                {listaMeses && (
+                  <>
+                    <div
+                      onClick={() => setListaMeses(false)}
+                      style={{ position: 'fixed', inset: 0, zIndex: 30 }}
+                    />
+                    <div style={{
+                      position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 31,
+                      background: T.card, border: `1px solid ${T.rule}`, borderRadius: '12px',
+                      boxShadow: '0 10px 30px rgba(18,33,28,.16)',
+                      padding: '6px', minWidth: '210px', maxHeight: '60vh', overflowY: 'auto',
+                    }}>
+                      {MESES.map((m, i) => {
+                        const absI = absMes(anoVisto, i);
+                        const info = calc.porMes[absI];
+                        const v = info ? info.fim : 0;
+                        const ativo = i === mes;
+                        const desativado = absI < mesInicialAbs;
+                        return (
+                          <button
+                            key={m}
+                            onClick={() => { setMes(i); setListaMeses(false); }}
+                            style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              gap: '12px', width: '100%', border: 0, cursor: 'pointer',
+                              background: ativo ? T.pale : 'transparent',
+                              borderRadius: '8px', padding: '9px 11px', textAlign: 'left',
+                              opacity: desativado ? 0.5 : 1,
+                            }}
+                          >
+                            <span style={{ fontSize: '13.5px', fontWeight: ativo ? 600 : 400, color: C.ink }}>
+                              {m}
+                            </span>
+                            <span style={{
+                              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                              fontSize: '12px', fontWeight: 600, color: v < 0 ? C.rose : T.forte,
+                            }}>
+                              {curto(v)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
+
               <div style={{
                 fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
                 fontSize: '13px', fontWeight: 600, color: r.fim < 0 ? C.rose : T.forte,
@@ -1404,21 +1482,33 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
                 >
                   {Array.from({ length: 31 }, (_, n) => <option key={n + 1} value={n + 1}>{n + 1}</option>)}
                 </select>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder={comParcelas ? "valor da parcela" : "0,00"}
-                  value={comParcelas ? item.valor : valorNoMes(item, mes)}
-                  onChange={(e) => onValor(item.id, e.target.value)}
-                  style={{
-                    border: `1px solid ${(comParcelas || origem.proprio) ? 'rgba(18,33,28,.28)' : 'rgba(18,33,28,.16)'}`,
-                    background: '#fff', borderRadius: '8px',
-                    padding: '8px 9px', fontFamily: "'IBM Plex Mono', monospace",
-                    fontVariantNumeric: 'tabular-nums', fontSize: '13px',
-                    color: (comParcelas || origem.proprio) ? C.ink : C.soft,
-                    textAlign: 'right', flex: '1 1 auto', minWidth: 0,
-                  }}
-                />
+                <div style={{
+                  display: 'flex', alignItems: 'center', flex: '1 1 auto', minWidth: 0,
+                  border: `1px solid ${(comParcelas || origem.proprio) ? 'rgba(18,33,28,.28)' : 'rgba(18,33,28,.16)'}`,
+                  background: '#fff', borderRadius: '8px', overflow: 'hidden',
+                }}>
+                  <span aria-hidden="true" style={{
+                    flex: 'none', paddingLeft: '9px',
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px', color: C.soft,
+                  }}>
+                    R$
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    aria-label={comParcelas ? 'Valor da parcela' : 'Valor'}
+                    value={comParcelas ? item.valor : valorNoMes(item, mes)}
+                    onChange={(e) => onValor(item.id, e.target.value)}
+                    style={{
+                      flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
+                      padding: '8px 9px 8px 6px', fontFamily: "'IBM Plex Mono', monospace",
+                      fontVariantNumeric: 'tabular-nums', fontSize: '13px',
+                      color: (comParcelas || origem.proprio) ? C.ink : C.soft,
+                      textAlign: 'right', outline: 'none',
+                    }}
+                  />
+                </div>
                 <button
                   onClick={() => onDel(item.id)}
                   aria-label={`Remover ${item.nome || 'linha'}`}
@@ -1650,23 +1740,33 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd, tema }) {
               </button>
             </div>
 
-            <input
-              type="text"
-              inputMode="decimal"
-              placeholder="0,00"
-              aria-label="Valor"
-              value={l.valor}
-              onChange={(e) => onCampo(l.id, 'valor', e.target.value)}
-              style={{
-                flex: '0 1 84px', minWidth: 0,
-                border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '7px',
-                padding: '7px 8px', fontFamily: "'IBM Plex Mono', monospace",
-                fontVariantNumeric: 'tabular-nums', fontSize: '13px',
-                color: num(l.valor) > 0 ? cor : C.ink,
-                fontWeight: num(l.valor) > 0 ? 600 : 400,
-                textAlign: 'right',
-              }}
-            />
+            <div style={{
+              display: 'flex', alignItems: 'center', flex: '0 1 104px', minWidth: 0,
+              border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '7px', overflow: 'hidden',
+            }}>
+              <span aria-hidden="true" style={{
+                flex: 'none', paddingLeft: '8px',
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: '11.5px', color: C.soft,
+              }}>
+                R$
+              </span>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="0,00"
+                aria-label="Valor"
+                value={l.valor}
+                onChange={(e) => onCampo(l.id, 'valor', e.target.value)}
+                style={{
+                  flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
+                  padding: '7px 8px 7px 5px', fontFamily: "'IBM Plex Mono', monospace",
+                  fontVariantNumeric: 'tabular-nums', fontSize: '13px',
+                  color: num(l.valor) > 0 ? cor : C.ink,
+                  fontWeight: num(l.valor) > 0 ? 600 : 400,
+                  textAlign: 'right', outline: 'none',
+                }}
+              />
+            </div>
 
             <input
               type="text"
