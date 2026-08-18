@@ -576,7 +576,13 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
               borderRadius: '8px', padding: '6px 11px', fontSize: '12px', cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: '5px',
             }}>
-              <span aria-hidden="true">👪</span> Família
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Membros
             </button>
             <button onClick={onSair} style={{
               border: `1px solid ${T.rule}`, background: 'transparent', color: C.soft,
@@ -1895,7 +1901,7 @@ function PainelFamilia({ supabase, onFechar, tema }) {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
           <h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '18px', margin: 0 }}>
-            Família
+            Membros da família
           </h2>
           <button onClick={onFechar} aria-label="Fechar" style={{
             border: 0, background: 'transparent', fontSize: '20px', color: C.soft, cursor: 'pointer', lineHeight: 1,
