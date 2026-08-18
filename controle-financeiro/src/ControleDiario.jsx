@@ -148,7 +148,7 @@ const ABAS = [
   { id: 'contas', rotulo: 'Contas', icone: '☰' },
 ];
 
-export default function ControleDiario({ familyCode, supabase, onSair }) {
+export default function ControleDiario({ familyId, supabase, onSair }) {
   const hoje = new Date();
   const [d, setD] = useState(PADRAO);
   const [aba, setAba] = useState('hoje');
@@ -159,6 +159,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const [ehMobile, setEhMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 760 : false);
   const [secoes, setSecoes] = useState({ contas: true, ranking: true, fechamento: false });
   const [listaMeses, setListaMeses] = useState(false);
+  const [mostrarFamilia, setMostrarFamilia] = useState(false);
   const alternar = (chave) => setSecoes((p) => ({ ...p, [chave]: !p[chave] }));
   const syncRef = useRef(null);
   const trilhaRef = useRef(null);
@@ -183,7 +184,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   useEffect(() => {
     const carregar = async () => {
       try {
-        const { data, error } = await supabase.from('families').select('data').eq('code', familyCode).single();
+        const { data, error } = await supabase.from('families').select('data').eq('id', familyId).single();
         if (error) throw error;
         if (data && data.data && Object.keys(data.data).length > 0) {
           const vindo = data.data;
@@ -197,14 +198,14 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       }
     };
     carregar();
-  }, [familyCode]);
+  }, [familyId]);
 
   useEffect(() => {
     if (carregando) return;
     if (syncRef.current) clearTimeout(syncRef.current);
     syncRef.current = setTimeout(async () => {
       try {
-        await supabase.from('families').update({ data: d }).eq('code', familyCode);
+        await supabase.from('families').update({ data: d }).eq('id', familyId);
       } catch (err) {
         console.error('Erro ao sincronizar:', err);
         setAviso('Erro ao salvar no servidor');
@@ -215,9 +216,9 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   useEffect(() => {
     const canal = supabase
-      .channel(`family-${familyCode}`)
+      .channel(`family-${familyId}`)
       .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'families', filter: `code=eq.${familyCode}` },
+        { event: 'UPDATE', schema: 'public', table: 'families', filter: `id=eq.${familyId}` },
         (payload) => {
           if (payload.new && payload.new.data) {
             const vindo = payload.new.data;
@@ -226,7 +227,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         })
       .subscribe();
     return () => { supabase.removeChannel(canal); };
-  }, [familyCode]);
+  }, [familyId]);
 
   const hojeChave = chaveDia(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
 
@@ -568,17 +569,27 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
             >
               Vistta
             </button>
-            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '10.5px', letterSpacing: '0.14em', textTransform: 'uppercase', color: C.soft }}>
-              {familyCode}
-            </span>
           </div>
-          <button onClick={onSair} style={{
-            border: `1px solid ${T.rule}`, background: 'transparent', color: C.soft,
-            borderRadius: '8px', padding: '6px 11px', fontSize: '12px', cursor: 'pointer',
-          }}>
-            Sair
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button onClick={() => setMostrarFamilia(true)} style={{
+              border: `1px solid ${T.rule}`, background: 'transparent', color: C.ink,
+              borderRadius: '8px', padding: '6px 11px', fontSize: '12px', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '5px',
+            }}>
+              <span aria-hidden="true">👪</span> Família
+            </button>
+            <button onClick={onSair} style={{
+              border: `1px solid ${T.rule}`, background: 'transparent', color: C.soft,
+              borderRadius: '8px', padding: '6px 11px', fontSize: '12px', cursor: 'pointer',
+            }}>
+              Sair
+            </button>
+          </div>
         </div>
+
+        {mostrarFamilia && (
+          <PainelFamilia supabase={supabase} onFechar={() => setMostrarFamilia(false)} tema={T} />
+        )}
 
         {/* abas no desktop ficam no topo */}
         {!ehMobile && (
@@ -1820,5 +1831,166 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd, tema }) {
 
       <BotoesAdicionar onAdd={onAdd} corEntrada={T.forte} />
     </div>
+  );
+}
+
+// Painel de família: lista quem está dentro e permite convidar/remover.
+// Aparece como uma janela sobre a tela, aberta pelo botão "Família" no topo.
+function PainelFamilia({ supabase, onFechar, tema }) {
+  const T = tema || { forte: C.deep, pale: C.pale, card: C.card, rule: C.rule };
+  const [membros, setMembros] = useState(null);
+  const [meuId, setMeuId] = useState(null);
+  const [convite, setConvite] = useState(null);
+  const [gerando, setGerando] = useState(false);
+  const [erro, setErro] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const { data: sessaoData } = await supabase.auth.getSession();
+      setMeuId(sessaoData?.session?.user?.id || null);
+
+      const { data, error } = await supabase.rpc('list_family_members');
+      if (error) { setErro('Não foi possível carregar os membros.'); return; }
+      setMembros(data || []);
+    })();
+  }, []);
+
+  const souDono = membros?.find((m) => m.user_id === meuId)?.role === 'owner';
+
+  const gerarConvite = async () => {
+    setGerando(true); setErro('');
+    try {
+      const { data, error } = await supabase.rpc('create_invite');
+      if (error) throw error;
+      setConvite(data);
+    } catch (err) {
+      setErro(err.message || 'Não foi possível gerar o convite.');
+    } finally {
+      setGerando(false);
+    }
+  };
+
+  const removerMembro = async (userId) => {
+    try {
+      const { error } = await supabase.rpc('remove_member', { p_user_id: userId });
+      if (error) throw error;
+      setMembros((prev) => prev.filter((m) => m.user_id !== userId));
+    } catch (err) {
+      setErro(err.message || 'Não foi possível remover.');
+    }
+  };
+
+  const copiarConvite = () => {
+    if (convite) navigator.clipboard?.writeText(convite);
+  };
+
+  return (
+    <>
+      <div onClick={onFechar} style={{ position: 'fixed', inset: 0, background: 'rgba(18,33,28,.35)', zIndex: 40 }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        zIndex: 41, width: 'min(420px, 92vw)', maxHeight: '82vh', overflowY: 'auto',
+        background: '#fff', borderRadius: '16px', padding: '22px',
+        boxShadow: '0 20px 50px rgba(18,33,28,.25)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+          <h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '18px', margin: 0 }}>
+            Família
+          </h2>
+          <button onClick={onFechar} aria-label="Fechar" style={{
+            border: 0, background: 'transparent', fontSize: '20px', color: C.soft, cursor: 'pointer', lineHeight: 1,
+          }}>
+            ×
+          </button>
+        </div>
+        <p style={{ fontSize: '12.5px', color: C.soft, marginBottom: '18px' }}>
+          Quem está dentro vê e edita os mesmos dados, em tempo real.
+        </p>
+
+        {membros === null ? (
+          <p style={{ fontSize: '13px', color: C.soft }}>Carregando...</p>
+        ) : (
+          <div style={{ display: 'grid', gap: '8px', marginBottom: '20px' }}>
+            {membros.map((m) => (
+              <div key={m.user_id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+                border: `1px solid ${T.rule}`, borderRadius: '10px', padding: '10px 12px',
+              }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '13.5px', fontWeight: 600, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.email}{m.user_id === meuId ? ' (você)' : ''}
+                  </div>
+                  <div style={{ fontSize: '11px', color: C.soft, marginTop: '2px' }}>
+                    {m.role === 'owner' ? 'Dono' : 'Membro'}
+                  </div>
+                </div>
+                {souDono && m.role !== 'owner' && (
+                  <button onClick={() => removerMembro(m.user_id)} style={{
+                    border: `1px solid ${C.rosePale}`, background: 'transparent', color: C.rose,
+                    borderRadius: '8px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer', flex: 'none',
+                  }}>
+                    Remover
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {souDono ? (
+          <div style={{ borderTop: `1px solid ${T.rule}`, paddingTop: '16px' }}>
+            <div style={{ fontSize: '13.5px', fontWeight: 600, color: C.ink, marginBottom: '4px' }}>
+              Convidar alguém
+            </div>
+            <p style={{ fontSize: '12px', color: C.soft, marginBottom: '12px', lineHeight: 1.5 }}>
+              Gere um código, envie para a pessoa (WhatsApp, por exemplo). Vale por 24 horas e só
+              funciona uma vez.
+            </p>
+
+            {!convite ? (
+              <button onClick={gerarConvite} disabled={gerando} style={{
+                width: '100%', background: T.forte, color: '#fff', border: 0, borderRadius: '9px',
+                padding: '11px', fontSize: '13.5px', fontWeight: 600, cursor: 'pointer',
+              }}>
+                {gerando ? 'Gerando...' : 'Gerar código de convite'}
+              </button>
+            ) : (
+              <div style={{
+                border: `1px dashed ${T.rule}`, borderRadius: '10px', padding: '14px', textAlign: 'center',
+              }}>
+                <div style={{
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: '24px', fontWeight: 700,
+                  letterSpacing: '0.12em', color: T.forte, marginBottom: '10px',
+                }}>
+                  {convite}
+                </div>
+                <button onClick={copiarConvite} style={{
+                  border: `1px solid ${T.rule}`, background: 'transparent', color: C.ink,
+                  borderRadius: '8px', padding: '8px 14px', fontSize: '12.5px', cursor: 'pointer',
+                }}>
+                  Copiar código
+                </button>
+                <p style={{ fontSize: '11px', color: C.soft, marginTop: '10px' }}>
+                  Válido por 24 horas, uso único.
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p style={{ fontSize: '12px', color: C.soft, borderTop: `1px solid ${T.rule}`, paddingTop: '14px' }}>
+            Só o dono da família pode convidar ou remover pessoas.
+          </p>
+        )}
+
+        {erro && (
+          <div style={{
+            border: `1px solid ${C.rosePale}`, background: C.rosePale, color: C.rose,
+            borderRadius: '10px', padding: '10px 13px', fontSize: '12.5px', marginTop: '14px',
+          }}>
+            {erro}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
