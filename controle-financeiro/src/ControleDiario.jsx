@@ -28,8 +28,6 @@ const C = {
 const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 const DIAS_SEM = ["dom","seg","ter","qua","qui","sex","sáb"];
-
-// sugestões de categoria — a pessoa pode digitar qualquer outra
 const CAT_SUGESTOES = ["Cartão de crédito","Mercado","Comer fora","Transporte","Saúde","Lazer","Compras","Viagem","Casa","Educação","Presentes","Outros"];
 
 const RENDAS_INICIAIS = [{ id: "r1", nome: "", dia: 5, valor: "" }];
@@ -62,46 +60,17 @@ const curto = (n) => {
 };
 
 // Converte o formato antigo (um gasto + uma entrada por dia) para lista de lançamentos.
-// Roda ao carregar, então os dados que já existem continuam valendo.
 const normalizarDias = (dias = {}) => {
   const saida = {};
   Object.entries(dias).forEach(([k, reg]) => {
     if (!reg) return;
     if (Array.isArray(reg.lancamentos)) { saida[k] = reg; return; }
     const lista = [];
-    if (num(reg.entrada) > 0) {
-      lista.push({ id: `${k}-e`, tipo: 'entrada', valor: reg.entrada, categoria: '' });
-    }
-    if (num(reg.valor) > 0) {
-      lista.push({ id: `${k}-s`, tipo: 'saida', valor: reg.valor, categoria: reg.categoria || '' });
-    }
+    if (num(reg.entrada) > 0) lista.push({ id: `${k}-e`, tipo: 'entrada', valor: reg.entrada, categoria: '' });
+    if (num(reg.valor) > 0) lista.push({ id: `${k}-s`, tipo: 'saida', valor: reg.valor, categoria: reg.categoria || '' });
     if (lista.length) saida[k] = { lancamentos: lista };
   });
   return saida;
-};
-
-// Valor de um item no mês pedido.
-// Se o mês não tem valor próprio, herda do mês preenchido mais recente antes dele.
-// Se nenhum mês anterior tem valor, usa o valor base do item.
-const valorNoMes = (item, abs) => {
-  const porMes = item.valores || {};
-  const chaves = Object.keys(porMes).map(Number).filter((k) => k <= abs).sort((a, b) => b - a);
-  for (const k of chaves) {
-    const v = porMes[k];
-    if (v !== undefined && v !== null) return v;
-  }
-  return item.valor ?? '';
-};
-
-// O mês tem valor próprio (foi editado nele) ou está herdando de outro?
-const origemDoValor = (item, abs) => {
-  const porMes = item.valores || {};
-  if (porMes[abs] !== undefined && porMes[abs] !== null) return { proprio: true, de: abs };
-  const anteriores = Object.keys(porMes).map(Number).filter((k) => k < abs).sort((a, b) => b - a);
-  for (const k of anteriores) {
-    if (porMes[k] !== undefined && porMes[k] !== null) return { proprio: false, de: k };
-  }
-  return { proprio: false, de: null };
 };
 
 // Mês absoluto: ano*12 + mês. É o que permite o saldo atravessar dezembro
@@ -126,7 +95,9 @@ const migrarParaAbsoluto = (dados) => {
 
   const parcelas = (dados.parcelas || []).map((p) => ({
     ...p,
-    mesInicio: p.mesInicio != null && ehAntigo(p.mesInicio) ? absMes(ano, Number(p.mesInicio)) : Number(p.mesInicio ?? absMes(ano, 0)),
+    mesInicio: p.mesInicio != null && ehAntigo(p.mesInicio)
+      ? absMes(ano, Number(p.mesInicio))
+      : Number(p.mesInicio ?? absMes(ano, 0)),
   }));
 
   return {
@@ -138,8 +109,28 @@ const migrarParaAbsoluto = (dados) => {
   };
 };
 
+// Valor de um item no mês pedido. Herda do mês preenchido mais recente antes dele.
+const valorNoMes = (item, abs) => {
+  const porMes = item.valores || {};
+  const chaves = Object.keys(porMes).map(Number).filter((k) => k <= abs).sort((a, b) => b - a);
+  for (const k of chaves) {
+    const v = porMes[k];
+    if (v !== undefined && v !== null) return v;
+  }
+  return item.valor ?? '';
+};
+
+const origemDoValor = (item, abs) => {
+  const porMes = item.valores || {};
+  if (porMes[abs] !== undefined && porMes[abs] !== null) return { proprio: true, de: abs };
+  const anteriores = Object.keys(porMes).map(Number).filter((k) => k < abs).sort((a, b) => b - a);
+  for (const k of anteriores) {
+    if (porMes[k] !== undefined && porMes[k] !== null) return { proprio: false, de: k };
+  }
+  return { proprio: false, de: null };
+};
+
 // Uma parcela vale do mês da compra até completar a quantidade contratada.
-// Diferente das contas, ela não herda valor: tem começo e fim definidos.
 const parcelaAtiva = (p, abs) => {
   const ini = Number(p.mesInicio ?? 0);
   const qtd = Number(p.quantidade || 0);
@@ -151,27 +142,26 @@ const parcelasDoMes = (parcelas = [], abs) => parcelas.filter((p) => parcelaAtiv
 const diasNoMes = (ano, mes) => new Date(ano, mes + 1, 0).getDate();
 const chaveDia = (ano, mes, dia) => `${ano}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
 
+const ABAS = [
+  { id: 'hoje', rotulo: 'Hoje', icone: '◈' },
+  { id: 'calendario', rotulo: 'Calendário', icone: '▤' },
+  { id: 'contas', rotulo: 'Contas', icone: '☰' },
+];
+
 export default function ControleDiario({ familyCode, supabase, onSair }) {
+  const hoje = new Date();
   const [d, setD] = useState(PADRAO);
-  const [mes, setMes] = useState(new Date().getMonth());
-  const [anoVisto, setAnoVisto] = useState(new Date().getFullYear());
+  const [aba, setAba] = useState('hoje');
+  const [mes, setMes] = useState(hoje.getMonth());
+  const [anoVisto, setAnoVisto] = useState(hoje.getFullYear());
   const [carregando, setCarregando] = useState(true);
   const [aviso, setAviso] = useState("");
-  const [secoes, setSecoes] = useState({ contas: true, calendario: true, ranking: true, fechamento: true });
-  const alternar = (chave) => setSecoes((p) => ({ ...p, [chave]: !p[chave] }));
   const [ehMobile, setEhMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 760 : false);
+  const [secoes, setSecoes] = useState({ contas: true, ranking: true, fechamento: false });
+  const alternar = (chave) => setSecoes((p) => ({ ...p, [chave]: !p[chave] }));
   const syncRef = useRef(null);
   const trilhaRef = useRef(null);
   const mesAtivoRef = useRef(null);
-
-  // deixa o mês selecionado visível na trilha, sem precisar arrastar
-  useEffect(() => {
-    if (!mesAtivoRef.current || !trilhaRef.current) return;
-    const trilha = trilhaRef.current;
-    const botao = mesAtivoRef.current;
-    const alvo = botao.offsetLeft - (trilha.clientWidth / 2) + (botao.clientWidth / 2);
-    trilha.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
-  }, [mes, anoVisto, carregando, ehMobile]);
 
   useEffect(() => {
     const aoRedimensionar = () => setEhMobile(window.innerWidth < 760);
@@ -179,18 +169,19 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     return () => window.removeEventListener('resize', aoRedimensionar);
   }, []);
 
-  // Carregar dados do Supabase
   useEffect(() => {
-    const loadData = async () => {
+    if (!mesAtivoRef.current || !trilhaRef.current) return;
+    const trilha = trilhaRef.current;
+    const botao = mesAtivoRef.current;
+    const alvo = botao.offsetLeft - (trilha.clientWidth / 2) + (botao.clientWidth / 2);
+    trilha.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
+  }, [mes, anoVisto, carregando, ehMobile, aba]);
+
+  useEffect(() => {
+    const carregar = async () => {
       try {
-        const { data, error } = await supabase
-          .from('families')
-          .select('data')
-          .eq('code', familyCode)
-          .single();
-
+        const { data, error } = await supabase.from('families').select('data').eq('code', familyCode).single();
         if (error) throw error;
-
         if (data && data.data && Object.keys(data.data).length > 0) {
           const vindo = data.data;
           setD(migrarParaAbsoluto({ ...PADRAO, ...vindo, dias: normalizarDias(vindo.dias) }));
@@ -202,10 +193,9 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         setCarregando(false);
       }
     };
-    loadData();
+    carregar();
   }, [familyCode]);
 
-  // Salvar (debounce de 1s)
   useEffect(() => {
     if (carregando) return;
     if (syncRef.current) clearTimeout(syncRef.current);
@@ -220,58 +210,47 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     return () => clearTimeout(syncRef.current);
   }, [d]);
 
-  // Tempo real
   useEffect(() => {
-    const channel = supabase
+    const canal = supabase
       .channel(`family-${familyCode}`)
-      .on(
-        'postgres_changes',
+      .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'families', filter: `code=eq.${familyCode}` },
         (payload) => {
           if (payload.new && payload.new.data) {
             const vindo = payload.new.data;
             setD(migrarParaAbsoluto({ ...PADRAO, ...vindo, dias: normalizarDias(vindo.dias) }));
           }
-        }
-      )
+        })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => { supabase.removeChannel(canal); };
   }, [familyCode]);
 
-  const hoje = new Date();
   const hojeChave = chaveDia(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
-  // O controle começa sozinho no primeiro mês em que existe algo preenchido —
-  // seja um valor de ganho/conta ou um lançamento no calendário.
-  // Primeiro mês com algo preenchido (em absoluto). O controle começa sozinho ali.
+
+  // Primeiro mês com algo preenchido. O controle começa sozinho ali.
   const mesInicialAbs = useMemo(() => {
     let menor = null;
     const considerar = (m) => { if (m !== null && (menor === null || m < menor)) menor = m; };
-
     ['rendas', 'fixos', 'contasVariaveis'].forEach((chave) => {
       (d[chave] || []).forEach((item) => {
         Object.entries(item.valores || {}).forEach(([m, v]) => { if (num(v) > 0) considerar(Number(m)); });
       });
     });
-
     (d.parcelas || []).forEach((p) => {
       if (num(p.valor) > 0 && Number(p.quantidade) > 0) considerar(Number(p.mesInicio));
     });
-
     Object.entries(d.dias || {}).forEach(([k, reg]) => {
       if (!(reg?.lancamentos || []).some((l) => num(l.valor) > 0)) return;
       const [ano, mesTexto] = k.split('-');
       considerar(absMes(Number(ano), Number(mesTexto) - 1));
     });
-
     if (menor !== null) return menor;
     return absMes(hoje.getFullYear(), hoje.getMonth());
   }, [d]);
 
-  // Até onde calcular: cobre os dados existentes, as parcelas em aberto e o ano seguinte.
   const mesFinalAbs = useMemo(() => {
     let maior = absMes(hoje.getFullYear() + 1, 11);
     const considerar = (m) => { if (m > maior) maior = m; };
-
     (d.parcelas || []).forEach((p) => {
       const qtd = Number(p.quantidade || 0);
       if (qtd > 0 && num(p.valor) > 0) considerar(Number(p.mesInicio) + qtd - 1);
@@ -285,8 +264,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         Object.keys(item.valores || {}).forEach((k) => considerar(Number(k)));
       });
     });
-
-    // teto de segurança: no máximo 5 anos a partir do início
     return Math.min(maior, mesInicialAbs + 12 * 5 - 1);
   }, [d, mesInicialAbs]);
 
@@ -299,19 +276,16 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const temAlgumDado = useMemo(() => {
     const temItem = ['rendas', 'fixos', 'contasVariaveis'].some((chave) =>
       (d[chave] || []).some((item) =>
-        num(item.valor) > 0 || Object.values(item.valores || {}).some((v) => num(v) > 0)
-      )
-    );
+        num(item.valor) > 0 || Object.values(item.valores || {}).some((v) => num(v) > 0)));
     if (temItem) return true;
     if ((d.parcelas || []).some((p) => num(p.valor) > 0)) return true;
     return Object.values(d.dias || {}).some((reg) =>
-      (reg?.lancamentos || []).some((l) => num(l.valor) > 0)
-    );
+      (reg?.lancamentos || []).some((l) => num(l.valor) > 0));
   }, [d]);
 
   const calc = useMemo(() => {
     const saldos = {};
-    const porMes = {}; // indexado pelo mês absoluto — o saldo atravessa dezembro
+    const porMes = {};
     let saldo = 0;
 
     for (let abs = mesInicialAbs; abs <= mesFinalAbs; abs++) {
@@ -329,6 +303,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       let variaveis = 0;
       let entradasAvulsasMes = 0;
       const cats = {};
+      const gastoPorDia = {};
 
       for (let dia = 1; dia <= total; dia++) {
         const k = chaveDia(ano, m, dia);
@@ -368,6 +343,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
           cats[c] = (cats[c] || 0) + v;
         });
 
+        gastoPorDia[dia] = varPlanejada + avulso;
         variaveis += varPlanejada + avulso;
         entradasAvulsasMes += entradaAvulsa;
       }
@@ -379,6 +355,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         parcelas: parcelasTotal,
         baseDia,
         variaveis,
+        gastoPorDia,
         sobra: ganhosTotal + entradasAvulsasMes - fixosTotal - parcelasTotal - variaveis,
         fim: saldo,
         cats,
@@ -386,7 +363,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         variaveisPlanejadas: d.contasVariaveis.reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0),
       };
     }
-
     return { saldos, porMes };
   }, [d, mesInicialAbs, mesFinalAbs]);
 
@@ -394,24 +370,28 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const antesDoInicio = absVisto < mesInicialAbs;
   const anoAtual = hoje.getFullYear();
   const outroAno = anoVisto !== anoAtual;
+  const ehMesCorrente = anoVisto === anoAtual && mes === hoje.getMonth();
 
-  // Fora do ano atual, a interface inteira muda para azul — inclusive as cores
-  // do dinheiro — para não haver dúvida de que você não está no presente.
-  // As seções de ganhos, contas e parcelas mantêm as cores próprias.
   const T = outroAno
     ? { paper: C.azulPaper, card: C.azulCard, rule: C.azulRule, forte: C.azul, medio: C.azulMedio, pale: C.azulPale, baseBg: C.azulBg, cabecalho: '#DCE7F1' }
     : { paper: C.paper, card: C.card, rule: C.rule, forte: C.deep, medio: C.mid, pale: C.pale, baseBg: '#E7F0E9', cabecalho: '#E7EAE2' };
 
   const mesVazio = {
-    abertura: 0, ganhos: 0, fixos: 0, parcelas: 0, baseDia: 0, variaveis: 0,
+    abertura: 0, ganhos: 0, fixos: 0, parcelas: 0, baseDia: 0, variaveis: 0, gastoPorDia: {},
     sobra: 0, fim: 0, cats: {}, dias: diasNoMes(anoVisto, mes), variaveisPlanejadas: 0,
   };
   const r = calc.porMes[absVisto] || mesVazio;
   const totalDias = r.dias;
+
+  // "Posso gastar hoje": o que sobrou dividido pelos dias que ainda faltam.
+  // Diferente da média fixa do mês, este número reage ao que já foi gasto.
+  const diasRestantes = ehMesCorrente ? totalDias - hoje.getDate() + 1 : totalDias;
+  const podeHoje = diasRestantes > 0 ? r.sobra / diasRestantes : 0;
+  const gastoDeHoje = ehMesCorrente ? (r.gastoPorDia?.[hoje.getDate()] || 0) : 0;
+  const sobrouHoje = podeHoje - gastoDeHoje;
   const mediaGasta = totalDias > 0 ? r.variaveis / totalDias : 0;
   const noRitmo = mediaGasta <= r.baseDia;
 
-  // categorias já usadas, para sugerir na lista
   const categoriasUsadas = useMemo(() => {
     const usadas = new Set();
     d.contasVariaveis.forEach((v) => { if (v.categoria && v.categoria.trim()) usadas.add(v.categoria.trim()); });
@@ -425,14 +405,12 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
   const setPadrao = (lista, id, campo, valor) =>
     setD((p) => ({ ...p, [lista]: p[lista].map((i) => (i.id === id ? { ...i, [campo]: valor } : i)) }));
 
-  // grava o valor apenas no mês aberto; os meses seguintes herdam automaticamente
   const setValorDoMes = (lista, id, valor) =>
     setD((p) => ({
       ...p,
       [lista]: p[lista].map((i) => (i.id === id ? { ...i, valores: { ...(i.valores || {}), [absVisto]: valor } } : i)),
     }));
 
-  // remove o valor próprio do mês, voltando a herdar do mês anterior
   const voltarAHerdar = (lista, id) =>
     setD((p) => ({
       ...p,
@@ -450,10 +428,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     const k = chaveDia(anoVisto, mes, dia);
     setD((p) => ({
       ...p,
-      dias: {
-        ...p.dias,
-        [k]: { lancamentos: [...listaDoDia(p, k), { id: `l${Date.now()}${Math.random().toString(36).slice(2, 6)}`, tipo, valor: '', categoria: '' }] },
-      },
+      dias: { ...p.dias, [k]: { lancamentos: [...listaDoDia(p, k), { id: `l${Date.now()}${Math.random().toString(36).slice(2, 6)}`, tipo, valor: '', categoria: '' }] } },
     }));
   };
 
@@ -461,10 +436,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     const k = chaveDia(anoVisto, mes, dia);
     setD((p) => ({
       ...p,
-      dias: {
-        ...p.dias,
-        [k]: { lancamentos: listaDoDia(p, k).map((l) => (l.id === id ? { ...l, [campo]: valor } : l)) },
-      },
+      dias: { ...p.dias, [k]: { lancamentos: listaDoDia(p, k).map((l) => (l.id === id ? { ...l, [campo]: valor } : l)) } },
     }));
   };
 
@@ -488,6 +460,7 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         ...(lista === 'parcelas' ? { quantidade: 12, mesInicio: absVisto } : {}),
       }],
     }));
+
   const delLinha = (lista, id) => setD((p) => ({ ...p, [lista]: p[lista].filter((i) => i.id !== id) }));
 
   const reordenar = (lista, de, para) => {
@@ -498,6 +471,11 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       copia.splice(para, 0, movido);
       return { ...p, [lista]: copia };
     });
+  };
+
+  const irParaHoje = () => {
+    setAnoVisto(hoje.getFullYear());
+    setMes(hoje.getMonth());
   };
 
   const catsOrdenadas = Object.entries(r.cats).sort((a, b) => b[1] - a[1]);
@@ -511,15 +489,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     return { bg: T.pale, fg: T.forte, barra: T.medio };
   };
 
-  if (carregando) {
-    return (
-      <div style={{ background: C.paper, color: C.soft, minHeight: '100vh', display: 'grid', placeItems: 'center', fontFamily: 'system-ui' }}>
-        Carregando seu controle…
-      </div>
-    );
-  }
-
-  // ── linhas do mês, usadas tanto na tabela (desktop) quanto nos cartões (celular) ──
   const linhasDoMes = Array.from({ length: totalDias }, (_, i) => {
     const dia = i + 1;
     const k = chaveDia(anoVisto, mes, dia);
@@ -528,8 +497,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
     const lancs = Array.isArray(reg.lancamentos) ? reg.lancamentos : [];
     return {
       dia, k, reg, lancs,
-      totalEntradas: lancs.reduce((t, l) => t + (l.tipo === 'entrada' ? num(l.valor) : 0), 0),
-      totalSaidas: lancs.reduce((t, l) => t + (l.tipo !== 'entrada' ? num(l.valor) : 0), 0),
       saldo: calc.saldos[k] || 0,
       sem,
       fds: sem === 0 || sem === 6,
@@ -543,28 +510,39 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
 
   const etiqueta = (texto, bg, fg) => (
     <span style={{
-      display: 'inline-block',
-      fontFamily: "'IBM Plex Mono', monospace",
-      fontSize: '10.5px',
-      padding: '3px 7px',
-      borderRadius: '6px',
-      background: bg,
-      color: fg,
-      whiteSpace: 'nowrap',
+      display: 'inline-block', fontFamily: "'IBM Plex Mono', monospace", fontSize: '10.5px',
+      padding: '3px 7px', borderRadius: '6px', background: bg, color: fg, whiteSpace: 'nowrap',
     }}>
       {texto}
     </span>
   );
 
+  if (carregando) {
+    return (
+      <div style={{ background: C.paper, color: C.soft, minHeight: '100vh', display: 'grid', placeItems: 'center', fontFamily: 'system-ui' }}>
+        Carregando seu controle…
+      </div>
+    );
+  }
+
+  const Caixa = ({ lab, val, cor }) => (
+    <div style={{ border: `1px solid ${T.rule}`, background: T.card, borderRadius: '11px', padding: '12px 13px' }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px', letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft }}>
+        {lab}
+      </div>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums', fontSize: '16px', fontWeight: 600, marginTop: '5px', color: cor }}>
+        {val}
+      </div>
+    </div>
+  );
+
   return (
     <div style={{
-      background: T.paper,
-      color: C.ink,
-      minHeight: '100vh',
-      transition: 'background .25s ease',
+      background: T.paper, color: C.ink, minHeight: '100vh',
       fontFamily: 'Inter, system-ui, sans-serif',
-      padding: ehMobile ? '16px 12px 48px' : '20px 16px 56px',
+      padding: ehMobile ? '14px 12px 92px' : '20px 16px 56px',
       WebkitFontSmoothing: 'antialiased',
+      transition: 'background .25s ease',
     }}>
       <style>{`
         * { box-sizing: border-box; }
@@ -572,161 +550,107 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
       `}</style>
 
       <div style={{ maxWidth: '1180px', margin: '0 auto' }}>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          marginBottom: '16px', gap: '10px', flexWrap: 'wrap',
-        }}>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: '11px', letterSpacing: '0.16em', textTransform: 'uppercase', color: C.soft,
-          }}>
-            Código: <strong>{familyCode}</strong>
+
+        {/* ───── cabeçalho ───── */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+            <span style={{ fontFamily: "'Bricolage Grotesque', system-ui", fontWeight: 800, fontSize: '20px', letterSpacing: '-0.03em' }}>
+              Vistta
+            </span>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '10.5px', letterSpacing: '0.14em', textTransform: 'uppercase', color: C.soft }}>
+              {familyCode}
+            </span>
           </div>
-          <button
-            onClick={onSair}
-            style={{
-              border: `1px solid ${C.rule}`, background: 'transparent', color: C.ink,
-              borderRadius: '8px', padding: '8px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer',
-            }}
-          >
+          <button onClick={onSair} style={{
+            border: `1px solid ${T.rule}`, background: 'transparent', color: C.soft,
+            borderRadius: '8px', padding: '6px 11px', fontSize: '12px', cursor: 'pointer',
+          }}>
             Sair
           </button>
         </div>
 
-        <h1 style={{
-          fontFamily: "'Bricolage Grotesque', system-ui",
-          fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 0.95,
-          margin: '6px 0 18px', fontSize: 'clamp(30px, 7vw, 52px)',
-        }}>
-          Vistta <span style={{
-            fontWeight: 500,
-            fontSize: '0.42em',
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-            color: C.soft,
-            whiteSpace: 'nowrap',
-          }}>— Controle Financeiro</span>
-        </h1>
-
-        <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 16px', lineHeight: 1.6 }}>
-          {temAlgumDado
-            ? `O controle começa em ${rotuloAbs(mesInicialAbs)} — o primeiro mês que você preencheu. Antes disso fica zerado.`
-            : 'Preencha um ganho, uma conta ou um lançamento e o controle começa a contar daquele mês em diante.'}
-        </p>
-
-        {/* saldo do mês — centralizado, sem menção a quem usa */}
-        <div style={{
-          border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
-          padding: ehMobile ? '20px 16px' : '26px 20px', margin: '18px 0', textAlign: 'center',
-        }}>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
-            letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft, marginBottom: '8px',
-          }}>
-            Saldo no fim de {MESES[mes].toLowerCase()}
+        {/* abas no desktop ficam no topo */}
+        {!ehMobile && (
+          <div style={{ display: 'flex', gap: '4px', marginBottom: '18px', borderBottom: `1px solid ${T.rule}` }}>
+            {ABAS.map((a) => {
+              const ativa = aba === a.id;
+              return (
+                <button key={a.id} onClick={() => setAba(a.id)} style={{
+                  border: 0, background: 'transparent', cursor: 'pointer',
+                  padding: '10px 16px', fontSize: '14px',
+                  fontWeight: ativa ? 600 : 400,
+                  color: ativa ? T.forte : C.soft,
+                  borderBottom: `2px solid ${ativa ? T.forte : 'transparent'}`,
+                  marginBottom: '-1px',
+                }}>
+                  {a.rotulo}
+                </button>
+              );
+            })}
           </div>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-            fontWeight: 600, fontSize: 'clamp(28px, 8vw, 44px)', lineHeight: 1,
-            color: r.fim < 0 ? C.rose : T.forte,
-          }}>
-            {brl(r.fim)}
-          </div>
-          {antesDoInicio && (
-            <div style={{ fontSize: '12px', color: C.soft, marginTop: '10px' }}>
-              Este mês fica zerado — o controle começa em {rotuloAbs(mesInicialAbs)}.
-            </div>
-          )}
-        </div>
+        )}
 
-        {/* navegação de ano — o ano que não é o atual ganha tom azul, para ficar claro
-            que você saiu do presente sem mudar nada na experiência do ano corrente */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
-          marginBottom: '14px',
-        }}>
+        {/* ───── ano e mês, compartilhados por todas as abas ───── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
           {anosDisponiveis.map((a) => {
             const ativo = a === anoVisto;
             const ehAtual = a === anoAtual;
             const corAtiva = ehAtual ? C.ink : C.azul;
             return (
-              <button
-                key={a}
-                onClick={() => setAnoVisto(a)}
-                aria-pressed={ativo}
-                style={{
-                  border: `1px solid ${ativo ? corAtiva : C.rule}`,
-                  background: ativo ? corAtiva : 'transparent',
-                  color: ativo ? '#fff' : ehAtual ? C.ink : C.azulMedio,
-                  borderRadius: '20px', padding: '7px 15px', cursor: 'pointer',
-                  fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                  fontSize: '13px', fontWeight: 600, letterSpacing: '0.04em',
-                  display: 'inline-flex', alignItems: 'center', gap: '7px',
-                }}
-              >
+              <button key={a} onClick={() => setAnoVisto(a)} aria-pressed={ativo} style={{
+                border: `1px solid ${ativo ? corAtiva : T.rule}`,
+                background: ativo ? corAtiva : 'transparent',
+                color: ativo ? '#fff' : ehAtual ? C.ink : C.azulMedio,
+                borderRadius: '20px', padding: '6px 14px', cursor: 'pointer',
+                fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                fontSize: '12.5px', fontWeight: 600, letterSpacing: '0.04em',
+              }}>
                 {a}
               </button>
             );
           })}
+          {!ehMesCorrente && (
+            <button onClick={irParaHoje} style={{
+              border: 0, background: 'transparent', color: T.forte, cursor: 'pointer',
+              fontSize: '12px', fontWeight: 600, textDecoration: 'underline', padding: '6px 2px',
+            }}>
+              ir para hoje
+            </button>
+          )}
         </div>
 
         {outroAno && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: '10px',
-            border: `1px solid ${C.azulPale}`,
-            borderLeft: `4px solid ${C.azul}`,
-            background: C.azulBg,
-            borderRadius: '10px', padding: '11px 14px', marginBottom: '16px',
+            border: `1px solid ${C.azulPale}`, borderLeft: `4px solid ${C.azul}`,
+            background: C.azulBg, borderRadius: '10px', padding: '10px 13px', marginBottom: '14px',
           }}>
-            <span aria-hidden="true" style={{ fontSize: '15px', lineHeight: 1, color: C.azul }}>
+            <span aria-hidden="true" style={{ fontSize: '14px', lineHeight: 1, color: C.azul }}>
               {anoVisto > anoAtual ? '↗' : '↩'}
             </span>
-            <div style={{ fontSize: '12.5px', color: C.azul, lineHeight: 1.55 }}>
-              Você está em <strong>{anoVisto}</strong>{anoVisto > anoAtual ? ' — projeção' : ' — histórico'}.
-              O saldo vem acumulado de {anoVisto - 1}, e as contas repetem o último valor informado.{' '}
-              <button
-                onClick={() => { setAnoVisto(anoAtual); setMes(hoje.getMonth()); }}
-                style={{
-                  border: 0, background: 'transparent', color: C.azul, padding: 0,
-                  fontSize: '12.5px', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer',
-                }}
-              >
-                voltar para {anoAtual}
-              </button>
+            <div style={{ fontSize: '12.5px', color: C.azul, lineHeight: 1.5 }}>
+              Você está em <strong>{anoVisto}</strong>. O saldo vem acumulado de {anoVisto - 1} e as contas
+              repetem o último valor informado.
             </div>
           </div>
         )}
 
-        <div style={{ marginBottom: '16px' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            gap: '8px', marginBottom: '6px',
-          }}>
+        <div style={{ marginBottom: '18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
             <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
-              letterSpacing: '0.12em', textTransform: 'uppercase',
-              color: outroAno ? C.azulMedio : C.soft,
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px', letterSpacing: '0.12em',
+              textTransform: 'uppercase', color: outroAno ? C.azulMedio : C.soft,
             }}>
               Meses de {anoVisto}
             </span>
-            <span style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              fontSize: '11px', color: C.soft,
-            }}>
-              arraste para ver todos
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: C.soft }}>
+              arraste
               <span aria-hidden="true" style={{ fontSize: '13px', lineHeight: 1 }}>↔</span>
             </span>
           </div>
 
           <div style={{ position: 'relative' }}>
-            <div
-              ref={trilhaRef}
-              style={{
-                display: 'flex', gap: '4px', overflowX: 'auto',
-                paddingBottom: '6px', paddingRight: '26px',
-                scrollbarWidth: 'thin',
-              }}
-            >
+            <div ref={trilhaRef} style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '6px', paddingRight: '26px' }}>
               {MESES.map((m, i) => {
                 const abs = absMes(anoVisto, i);
                 const info = calc.porMes[abs];
@@ -735,21 +659,16 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 const desativado = abs < mesInicialAbs;
                 const corAtiva = outroAno ? C.azul : C.ink;
                 return (
-                  <button
-                    key={m}
-                    ref={on ? mesAtivoRef : null}
-                    onClick={() => setMes(i)}
-                    style={{
-                      flex: '1 0 auto', minWidth: '66px',
-                      border: `1px solid ${on ? corAtiva : C.rule}`,
-                      background: on ? corAtiva : 'transparent',
-                      borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
-                      opacity: desativado && !on ? 0.45 : 1,
-                    }}
-                  >
+                  <button key={m} ref={on ? mesAtivoRef : null} onClick={() => setMes(i)} style={{
+                    flex: '1 0 auto', minWidth: '66px',
+                    border: `1px solid ${on ? corAtiva : T.rule}`,
+                    background: on ? corAtiva : 'transparent',
+                    borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
+                    opacity: desativado && !on ? 0.45 : 1,
+                  }}>
                     <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px',
-                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                      fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', letterSpacing: '0.1em',
+                      textTransform: 'uppercase',
                       color: on ? 'rgba(255,255,255,.7)' : outroAno ? C.azulMedio : C.soft,
                     }}>
                       {ABREV[i]}
@@ -765,8 +684,6 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
                 );
               })}
             </div>
-
-            {/* desbotado na borda direita: mostra que tem mais conteúdo para o lado */}
             <div aria-hidden="true" style={{
               position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
               background: `linear-gradient(to right, rgba(255,255,255,0), ${T.paper})`,
@@ -778,498 +695,487 @@ export default function ControleDiario({ familyCode, supabase, onSair }) {
         {aviso && (
           <div style={{
             border: `1px solid ${C.rosePale}`, background: C.rosePale, color: C.rose,
-            borderRadius: '10px', padding: '10px 13px', fontSize: '13px', margin: '14px 0',
+            borderRadius: '10px', padding: '10px 13px', fontSize: '13px', marginBottom: '14px',
           }}>
             {aviso}
           </div>
         )}
 
-        {/* base por dia */}
-        <div style={{
-          border: `1px solid ${T.pale}`, background: T.baseBg, borderRadius: '12px',
-          padding: '16px 18px', marginBottom: '18px',
-        }}>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
-            letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
-          }}>
-            Base por dia em {MESES[mes].toLowerCase()}
-          </div>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-            fontSize: 'clamp(24px, 5vw, 32px)', fontWeight: 600, lineHeight: 1, marginTop: '6px',
-            color: r.baseDia < 0 ? C.rose : T.forte,
-          }}>
-            {brl(r.baseDia)}
-            <span style={{ fontFamily: 'Inter, sans-serif', fontSize: 14, fontWeight: 400, color: C.soft, marginLeft: 12 }}>
-              · {brl(r.baseDia * 7)} por semana
-            </span>
-          </div>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: '11.5px',
-            color: C.soft, marginTop: '10px', lineHeight: 1.7,
-          }}>
-            ({brl(r.ganhos)} de ganhos − {brl(r.fixos)} de contas fixas
-            {(r.parcelas ?? 0) > 0 ? ` − ${brl(r.parcelas)} de parcelas` : ''}) ÷ {totalDias} dias
-          </div>
-          <p style={{ fontSize: '12px', color: C.soft, marginTop: '10px', lineHeight: 1.6 }}>
-            {antesDoInicio
-              ? `Mês anterior a ${rotuloAbs(mesInicialAbs)}, quando o controle começa.`
-              : r.variaveis > 0 ? (
-                <>
-                  Você já gastou <strong style={{ color: noRitmo ? T.forte : C.rose }}>{brl(mediaGasta)} por dia</strong> em
-                  média este mês — {noRitmo ? 'dentro da base.' : 'acima da base.'}
-                </>
-              ) : 'Lance os gastos na tabela e este número ganha um comparativo do quanto você está gastando de verdade.'}
-          </p>
-        </div>
-
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: ehMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))',
-          gap: '10px', margin: '18px 0',
-        }}>
-          {[
-            { lab: "Vem do mês anterior", val: brl(r.abertura), cor: r.abertura < 0 ? C.rose : C.ink },
-            { lab: "Ganhos", val: brl(r.ganhos), cor: T.forte },
-            { lab: "Contas fixas", val: brl(r.fixos), cor: C.steel },
-            { lab: "Parcelas", val: brl(r.parcelas ?? 0), cor: C.clay },
-            { lab: "Variáveis", val: brl(r.variaveis), cor: C.amber },
-            { lab: "Sobra do mês", val: brl(r.sobra), cor: r.sobra < 0 ? C.rose : T.forte },
-          ].map((box, i) => (
-            <div key={i} style={{
-              border: `1px solid ${T.rule}`, background: T.card, borderRadius: '11px', padding: '12px 13px',
-            }}>
+        {/* ═══════════ ABA: HOJE ═══════════ */}
+        {aba === 'hoje' && (
+          <>
+            {!temAlgumDado ? (
               <div style={{
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
-                letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
+                border: `1px dashed ${T.rule}`, background: T.card, borderRadius: '14px',
+                padding: '28px 20px', textAlign: 'center',
               }}>
-                {box.lab}
+                <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '18px', marginBottom: '8px' }}>
+                  Vamos começar
+                </div>
+                <p style={{ fontSize: '13px', color: C.soft, lineHeight: 1.6, maxWidth: '38ch', margin: '0 auto 16px' }}>
+                  Cadastre seus ganhos e contas na aba Contas. A partir do primeiro valor, esta tela passa
+                  a mostrar quanto você pode gastar por dia.
+                </p>
+                <button onClick={() => setAba('contas')} style={{
+                  background: C.ink, color: '#fff', border: 0, borderRadius: '10px',
+                  padding: '11px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer',
+                }}>
+                  Cadastrar contas
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* o número principal */}
+                <div style={{
+                  border: `1px solid ${T.pale}`, background: T.baseBg, borderRadius: '14px',
+                  padding: ehMobile ? '22px 18px' : '28px 24px', textAlign: 'center', marginBottom: '12px',
+                }}>
+                  <div style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: '10.5px', letterSpacing: '0.14em',
+                    textTransform: 'uppercase', color: C.soft, marginBottom: '10px',
+                  }}>
+                    {ehMesCorrente ? 'Posso gastar hoje' : `Média por dia em ${MESES[mes].toLowerCase()}`}
+                  </div>
+                  <div style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                    fontWeight: 600, fontSize: 'clamp(34px, 11vw, 56px)', lineHeight: 1, letterSpacing: '-0.02em',
+                    color: (ehMesCorrente ? sobrouHoje : r.baseDia) < 0 ? C.rose : T.forte,
+                  }}>
+                    {brl(ehMesCorrente ? sobrouHoje : r.baseDia)}
+                  </div>
+
+                  {ehMesCorrente && (
+                    <div style={{ fontSize: '12.5px', color: C.soft, marginTop: '12px', lineHeight: 1.6 }}>
+                      {gastoDeHoje > 0 ? (
+                        <>Você já gastou <strong style={{ color: C.rose }}>{brl(gastoDeHoje)}</strong> hoje,
+                        de um limite de {brl(podeHoje)}.</>
+                      ) : (
+                        <>Sobram <strong>{brl(r.sobra)}</strong> para os {diasRestantes}{' '}
+                        {diasRestantes === 1 ? 'dia restante' : 'dias restantes'} do mês.</>
+                      )}
+                    </div>
+                  )}
+                  {!ehMesCorrente && (
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', color: C.soft, marginTop: '10px' }}>
+                      ({brl(r.ganhos)} − {brl(r.fixos)} de fixas
+                      {r.parcelas > 0 ? ` − ${brl(r.parcelas)} de parcelas` : ''}) ÷ {totalDias} dias
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: ehMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: '10px', marginBottom: '18px' }}>
+                  <Caixa lab={`Fim de ${ABREV[mes]}`} val={brl(r.fim)} cor={r.fim < 0 ? C.rose : T.forte} />
+                  <Caixa lab="Sobra do mês" val={brl(r.sobra)} cor={r.sobra < 0 ? C.rose : T.forte} />
+                  <Caixa lab="Já gasto no mês" val={brl(r.variaveis)} cor={C.vinho} />
+                  <Caixa lab="Comprometido" val={brl(r.fixos + r.parcelas)} cor={C.steel} />
+                </div>
+
+                {ehMesCorrente && (
+                  <button onClick={() => setAba('calendario')} style={{
+                    width: '100%', border: `1px solid ${T.rule}`, background: T.card,
+                    borderRadius: '12px', padding: '13px 16px', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '10px', marginBottom: '18px', textAlign: 'left',
+                  }}>
+                    <span style={{ fontSize: '13.5px', fontWeight: 600, color: C.ink }}>
+                      Lançar um gasto de hoje
+                    </span>
+                    <span aria-hidden="true" style={{ color: C.soft, fontSize: '14px' }}>→</span>
+                  </button>
+                )}
+
+                {/* ranking */}
+                <div style={{
+                  border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
+                  padding: ehMobile ? '14px' : '16px 18px', marginBottom: '18px',
+                }}>
+                  <CabecalhoSecao
+                    titulo={`Para onde foi em ${MESES[mes].toLowerCase()}`}
+                    subtitulo="Ranking por categoria — contas variáveis e gastos avulsos somados."
+                    aberta={secoes.ranking}
+                    onToggle={() => alternar('ranking')}
+                    cor={C.vinho}
+                  />
+                  <div style={{ height: '12px' }} />
+                  {!secoes.ranking ? null : catsOrdenadas.length === 0 ? (
+                    <p style={{ fontSize: '12px', color: C.soft, lineHeight: 1.6 }}>
+                      Nada lançado ainda. O primeiro gasto com categoria aparece aqui.
+                    </p>
+                  ) : (
+                    catsOrdenadas.map(([c, v], idx) => (
+                      <div key={c} style={{
+                        display: 'grid', gridTemplateColumns: '22px 1fr auto', gap: '10px',
+                        alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #E4E8E0',
+                      }}>
+                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px', fontWeight: 700, color: idx === 0 ? C.vinho : C.soft }}>
+                          {idx + 1}º
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '13px', fontWeight: idx === 0 ? 600 : 400 }}>{c}</div>
+                          <div style={{
+                            height: '6px', borderRadius: '3px', background: C.vinho, marginTop: '5px',
+                            width: `${Math.max(4, (v / maxCat) * 100)}%`, opacity: idx === 0 ? 1 : 0.75,
+                          }} />
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums', fontSize: '13px', fontWeight: 600 }}>
+                            {brl(v)}
+                          </div>
+                          <div style={{ fontSize: '10.5px', color: C.soft }}>
+                            {totalCats > 0 ? Math.round((v / totalCats) * 100) : 0}%
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* fechamento de cada mês */}
+                <div style={{
+                  border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
+                  padding: ehMobile ? '14px' : '16px 18px',
+                }}>
+                  <CabecalhoSecao
+                    titulo={`Fechamento de cada mês de ${anoVisto}`}
+                    subtitulo="Saldo no último dia."
+                    aberta={secoes.fechamento}
+                    onToggle={() => alternar('fechamento')}
+                    cor={T.forte}
+                  />
+                  {secoes.fechamento && <div style={{ height: '12px' }} />}
+                  {secoes.fechamento && MESES.map((m, i) => {
+                    const absI = absMes(anoVisto, i);
+                    const x = calc.porMes[absI] || { fim: 0 };
+                    const doAno = MESES.map((_, j) => calc.porMes[absMes(anoVisto, j)]?.fim || 0);
+                    const maxAno = Math.max(1, ...doAno.map((y) => Math.abs(y)));
+                    return (
+                      <div key={m} onClick={() => setMes(i)} style={{
+                        display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px', alignItems: 'center',
+                        padding: '7px 0', borderBottom: '1px solid #E4E8E0', cursor: 'pointer',
+                        opacity: absI < mesInicialAbs ? 0.5 : 1,
+                      }}>
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: i === mes ? 600 : 400 }}>{m}</div>
+                          <div style={{
+                            height: '5px', borderRadius: '3px',
+                            background: x.fim < 0 ? C.rose : T.medio, marginTop: '5px',
+                            width: `${Math.max(3, (Math.abs(x.fim) / maxAno) * 100)}%`,
+                          }} />
+                        </div>
+                        <div style={{
+                          fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                          fontSize: '13px', fontWeight: 600, color: x.fim < 0 ? C.rose : C.ink,
+                        }}>
+                          {brl(x.fim)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {/* ═══════════ ABA: CALENDÁRIO ═══════════ */}
+        {aba === 'calendario' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
+              <div>
+                <h2 style={{ fontFamily: "'Bricolage Grotesque', system-ui", fontSize: 'clamp(20px, 4.4vw, 28px)', fontWeight: 800, margin: 0 }}>
+                  {MESES[mes]}{outroAno ? ` de ${anoVisto}` : ''}
+                </h2>
+                <p style={{ fontSize: '12px', color: C.soft, margin: '4px 0 0' }}>
+                  Adicione quantos lançamentos quiser em cada dia. O resto entra sozinho.
+                </p>
               </div>
               <div style={{
                 fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                fontSize: '16px', fontWeight: 600, marginTop: '5px', color: box.cor,
+                fontSize: '13px', fontWeight: 600, color: r.fim < 0 ? C.rose : T.forte,
               }}>
-                {box.val}
+                fecha em {brl(r.fim)}
               </div>
             </div>
-          ))}
-        </div>
 
-        {/* painel dos três blocos */}
-        <div style={{
-          border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
-          padding: ehMobile ? '14px' : '16px 18px', marginBottom: '18px',
-        }}>
-          <CabecalhoSecao
-            titulo="Ganhos, contas e parcelas"
-            subtitulo={<>Os valores são de <strong>{MESES[mes].toLowerCase()}{outroAno ? ` de ${anoVisto}` : ''}</strong>. Se você não mexer num mês, ele repete o valor do mês anterior — então só edite quando a conta mudar.</>}
-            aberta={secoes.contas}
-            onToggle={() => alternar('contas')}
-            cor={T.forte}
-          />
-
-          {secoes.contas && (
-            <>
-              <Bloco cor={C.deep} fundo="#DCEEE4" titulo="Entra">
-                <TabelaItens
-                  itens={d.rendas}
-                  exemploNome="ex: Salário"
-                  onNome={(id, v) => setPadrao('rendas', id, 'nome', v)}
-                  onDia={(id, v) => setPadrao('rendas', id, 'dia', v)}
-                  onValor={(id, v) => setValorDoMes('rendas', id, v)}
-                  onHerdar={(id) => voltarAHerdar('rendas', id)}
-                  mes={absVisto}
-                  onDel={(id) => delLinha('rendas', id)}
-                  onReordenar={(de, para) => reordenar('rendas', de, para)}
-                />
-                <BotaoAdd onClick={() => addLinha('rendas')}>+ Outra entrada</BotaoAdd>
-                <Total label="Total que entra" valor={brl(r.ganhos)} cor={C.deep} />
-              </Bloco>
-
-              <Bloco cor={C.steel} fundo="#E1E7EF" titulo="Sai todo mês (contas fixas)">
-                <TabelaItens
-                  itens={d.fixos}
-                  exemploNome="ex: Aluguel"
-                  onNome={(id, v) => setPadrao('fixos', id, 'nome', v)}
-                  onDia={(id, v) => setPadrao('fixos', id, 'dia', v)}
-                  onValor={(id, v) => setValorDoMes('fixos', id, v)}
-                  onHerdar={(id) => voltarAHerdar('fixos', id)}
-                  mes={absVisto}
-                  onDel={(id) => delLinha('fixos', id)}
-                  onReordenar={(de, para) => reordenar('fixos', de, para)}
-                />
-                <BotaoAdd onClick={() => addLinha('fixos')}>+ Outra conta fixa</BotaoAdd>
-                <Total label="Total de contas fixas" valor={brl(r.fixos)} cor={C.steel} />
-              </Bloco>
-
-              <Bloco cor={C.amber} fundo="#F3E6CC" titulo="Contas variáveis">
-                <p style={{ fontSize: '12px', color: C.soft, marginTop: '-4px', marginBottom: '12px', lineHeight: 1.6 }}>
-                  Gastos cujo valor você não sabe de antemão. Marque uma categoria para acompanhar no
-                  ranking do mês.
-                </p>
-                <TabelaItens
-                  itens={d.contasVariaveis}
-                  exemploNome="ex: Rodízio japonês"
-                  comCategoria
-                  categorias={categoriasUsadas}
-                  onNome={(id, v) => setPadrao('contasVariaveis', id, 'nome', v)}
-                  onDia={(id, v) => setPadrao('contasVariaveis', id, 'dia', v)}
-                  onValor={(id, v) => setValorDoMes('contasVariaveis', id, v)}
-                  onHerdar={(id) => voltarAHerdar('contasVariaveis', id)}
-                  mes={absVisto}
-                  onCategoria={(id, v) => setPadrao('contasVariaveis', id, 'categoria', v)}
-                  onDel={(id) => delLinha('contasVariaveis', id)}
-                  onReordenar={(de, para) => reordenar('contasVariaveis', de, para)}
-                />
-                <BotaoAdd onClick={() => addLinha('contasVariaveis')}>+ Outra conta variável</BotaoAdd>
-                <Total label="Total de contas variáveis" valor={brl(r.variaveisPlanejadas ?? 0)} cor={C.amber} />
-              </Bloco>
-
-              <Bloco cor={C.clay} fundo="#F0E3DA" titulo="Compras parceladas">
-                <p style={{ fontSize: '12px', color: C.soft, marginTop: '-4px', marginBottom: '12px', lineHeight: 1.6 }}>
-                  Informe o valor de <strong>uma</strong> parcela e quantas são. O app conta sozinho e
-                  para na última — some da base diária enquanto durar.
-                </p>
-                <TabelaItens
-                  itens={d.parcelas || []}
-                  exemploNome="ex: Geladeira"
-                  comParcelas
-                  mes={absVisto}
-                  ano={anoVisto}
-                  onNome={(id, v) => setPadrao('parcelas', id, 'nome', v)}
-                  onDia={(id, v) => setPadrao('parcelas', id, 'dia', v)}
-                  onValor={(id, v) => setPadrao('parcelas', id, 'valor', v)}
-                  onQuantidade={(id, v) => setPadrao('parcelas', id, 'quantidade', v)}
-                  onMesInicio={(id, v) => setPadrao('parcelas', id, 'mesInicio', v)}
-                  onDel={(id) => delLinha('parcelas', id)}
-                  onReordenar={(de, para) => reordenar('parcelas', de, para)}
-                />
-                <BotaoAdd onClick={() => addLinha('parcelas')}>+ Outra compra parcelada</BotaoAdd>
-                <Total label={`Parcelas em ${MESES[mes].toLowerCase()}${outroAno ? ` de ${anoVisto}` : ""}`} valor={brl(r.parcelas ?? 0)} cor={C.clay} />
-              </Bloco>
-            </>
-          )}
-        </div>
-
-        {/* calendário do mês */}
-        <button
-          onClick={() => alternar('calendario')}
-          aria-expanded={secoes.calendario}
-          style={{
-            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-            gap: '12px', width: '100%', border: 0, background: 'transparent',
-            padding: 0, cursor: 'pointer', textAlign: 'left', marginBottom: '4px',
-          }}
-        >
-          <span>
-            <span style={{
-              display: 'block',
-              fontFamily: "'Bricolage Grotesque', system-ui",
-              fontSize: 'clamp(22px, 4.4vw, 30px)', fontWeight: 800, color: C.ink,
-            }}>
-              {MESES[mes]}{outroAno ? ` de ${anoVisto}` : ''}
-            </span>
-            <span style={{ display: 'block', fontSize: '12px', color: C.soft, marginTop: '4px' }}>
-              Adicione quantos lançamentos quiser em cada dia. O resto entra sozinho.
-            </span>
-          </span>
-          <span aria-hidden="true" style={{
-            flex: 'none', color: T.forte, fontSize: '11px', lineHeight: 1,
-            transform: secoes.calendario ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform .2s ease',
-          }}>
-            ▼
-          </span>
-        </button>
-
-        <div style={{ height: '12px' }} />
-
-        {secoes.calendario && (
-          <>
-        {ehMobile ? (
-          <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
-            {linhasDoMes.map((L) => {
-              const cor = faixa(L.saldo);
-              const temAuto = L.ents.length || L.fixs.length || L.vars.length || L.pars.length;
-              return (
-                <div key={L.dia} style={{
-                  display: 'flex',
-                  alignItems: 'stretch',
-                  gap: '12px',
-                  border: `1px solid ${L.ehHoje ? C.amber : T.rule}`,
-                  background: T.card,
-                  borderRadius: '11px',
-                  padding: '12px 13px',
-                }}>
-                  <div style={{
-                    flex: 'none',
-                    width: '42px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'flex-start',
-                    borderRight: `1px solid ${T.rule}`,
-                    paddingRight: '10px',
-                  }}>
-                    <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontVariantNumeric: 'tabular-nums',
-                      fontSize: '20px',
-                      fontWeight: 600,
-                      lineHeight: 1,
-                      letterSpacing: '-0.01em',
-                      color: L.ehHoje ? C.amber : L.fds ? C.soft : C.ink,
+            {ehMobile ? (
+              <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
+                {linhasDoMes.map((L) => {
+                  const cor = faixa(L.saldo);
+                  const temAuto = L.ents.length || L.fixs.length || L.vars.length || L.pars.length;
+                  return (
+                    <div key={L.dia} style={{
+                      display: 'flex', alignItems: 'stretch', gap: '12px',
+                      border: `1px solid ${L.ehHoje ? C.amber : T.rule}`,
+                      background: T.card, borderRadius: '11px', padding: '12px 13px',
                     }}>
-                      {String(L.dia).padStart(2, '0')}
-                    </div>
-                    <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontSize: '9.5px',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.1em',
-                      color: L.ehHoje ? C.amber : C.soft,
-                      marginTop: '4px',
-                    }}>
-                      {L.ehHoje ? 'hoje' : DIAS_SEM[L.sem]}
-                    </div>
-                  </div>
-
-                  <div style={{ flex: '1 1 auto', minWidth: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: temAuto ? '8px' : '6px' }}>
-                      <span style={{
-                        fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                        fontSize: '14px', fontWeight: 700,
-                        background: cor.bg, color: cor.fg,
-                        padding: '4px 9px', borderRadius: '7px', whiteSpace: 'nowrap',
+                      <div style={{
+                        flex: 'none', width: '42px', display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', justifyContent: 'flex-start',
+                        borderRight: `1px solid ${T.rule}`, paddingRight: '10px',
                       }}>
-                        {brl(L.saldo)}
-                      </span>
-                    </div>
-
-                    {temAuto > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
-                        {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
-                        {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
-                        {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
-                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
-                      </div>
-                    )}
-
-                    <Lancamentos
-                      tema={T}
-                      lancs={L.lancs}
-                      onCampo={(id, campo, v) => setLancamento(L.dia, id, campo, v)}
-                      onDel={(id) => delLancamento(L.dia, id)}
-                      onAdd={(tipo) => addLancamento(L.dia, tipo)}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div style={{
-            border: `1px solid ${T.rule}`, borderRadius: '14px', overflow: 'hidden',
-            background: T.card, marginBottom: '18px',
-          }}>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '680px' }}>
-                <thead>
-                  <tr>
-                    {['Dia', 'Lançamentos automáticos', 'Lançamentos do dia', 'Saldo'].map((h, i) => (
-                      <th key={h} style={{
-                        fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
-                        letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
-                        fontWeight: 500, textAlign: i === 3 ? 'right' : 'left',
-                        padding: '11px 10px', background: T.cabecalho, borderBottom: `1px solid ${T.rule}`,
-                        width: i === 2 ? '340px' : undefined,
-                      }}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {linhasDoMes.map((L) => {
-                    const cor = faixa(L.saldo);
-                    return (
-                      <tr key={L.dia} style={{
-                        background: L.fds ? 'rgba(18,33,28,0.02)' : 'transparent',
-                        boxShadow: L.ehHoje ? `inset 3px 0 0 ${C.amber}` : 'none',
-                      }}>
-                        <td style={{
+                        <div style={{
                           fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                          padding: '10px', borderBottom: '1px solid #E2E6DE',
-                          textAlign: 'left', verticalAlign: 'top', whiteSpace: 'nowrap',
+                          fontSize: '20px', fontWeight: 600, lineHeight: 1, letterSpacing: '-0.01em',
+                          color: L.ehHoje ? C.amber : L.fds ? C.soft : C.ink,
                         }}>
+                          {String(L.dia).padStart(2, '0')}
+                        </div>
+                        <div style={{
+                          fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+                          textTransform: 'uppercase', letterSpacing: '0.1em',
+                          color: L.ehHoje ? C.amber : C.soft, marginTop: '4px',
+                        }}>
+                          {L.ehHoje ? 'hoje' : DIAS_SEM[L.sem]}
+                        </div>
+                      </div>
+
+                      <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: temAuto ? '8px' : '6px' }}>
                           <span style={{
-                            fontSize: '14px', fontWeight: 600,
-                            color: L.ehHoje ? C.amber : L.fds ? C.soft : C.ink,
+                            fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                            fontSize: '14px', fontWeight: 700, background: cor.bg, color: cor.fg,
+                            padding: '4px 9px', borderRadius: '7px', whiteSpace: 'nowrap',
                           }}>
-                            {String(L.dia).padStart(2, '0')}
+                            {brl(L.saldo)}
                           </span>
-                          <span style={{
-                            fontSize: '10px', color: C.soft, marginLeft: '6px',
-                            textTransform: 'uppercase', letterSpacing: '0.06em',
-                          }}>
-                            {DIAS_SEM[L.sem]}
-                          </span>
-                        </td>
-                        <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left', verticalAlign: 'top' }}>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        </div>
+
+                        {temAuto > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
                             {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
                             {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
                             {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
                             {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
                           </div>
-                        </td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid #E2E6DE', verticalAlign: 'top' }}>
-                          <Lancamentos
-                            tema={T}
-                            lancs={L.lancs}
-                            onCampo={(id, campo, v) => setLancamento(L.dia, id, campo, v)}
-                            onDel={(id) => delLancamento(L.dia, id)}
-                            onAdd={(tipo) => addLancamento(L.dia, tipo)}
-                          />
-                        </td>
-                        <td style={{
-                          textAlign: 'right', fontFamily: "'IBM Plex Mono', monospace",
-                          fontVariantNumeric: 'tabular-nums', fontSize: '14px', fontWeight: 600,
-                          padding: '10px 14px', borderBottom: '1px solid #E2E6DE',
-                          background: cor.bg, color: cor.fg, whiteSpace: 'nowrap', verticalAlign: 'top',
-                        }}>
-                          {brl(L.saldo)}
-                        </td>
+                        )}
+
+                        <Lancamentos
+                          tema={T}
+                          lancs={L.lancs}
+                          onCampo={(id, campo, v) => setLancamento(L.dia, id, campo, v)}
+                          onDel={(id) => delLancamento(L.dia, id)}
+                          onAdd={(tipo) => addLancamento(L.dia, tipo)}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{
+                border: `1px solid ${T.rule}`, borderRadius: '14px', overflow: 'hidden',
+                background: T.card, marginBottom: '18px',
+              }}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '680px' }}>
+                    <thead>
+                      <tr>
+                        {['Dia', 'Lançamentos automáticos', 'Lançamentos do dia', 'Saldo'].map((h, i) => (
+                          <th key={h} style={{
+                            fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px',
+                            letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft,
+                            fontWeight: 500, textAlign: i === 3 ? 'right' : 'left',
+                            padding: '11px 10px', background: T.cabecalho, borderBottom: `1px solid ${T.rule}`,
+                            width: i === 2 ? '340px' : undefined,
+                          }}>
+                            {h}
+                          </th>
+                        ))}
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                    </thead>
+                    <tbody>
+                      {linhasDoMes.map((L) => {
+                        const cor = faixa(L.saldo);
+                        return (
+                          <tr key={L.dia} style={{
+                            background: L.fds ? 'rgba(18,33,28,0.02)' : 'transparent',
+                            boxShadow: L.ehHoje ? `inset 3px 0 0 ${C.amber}` : 'none',
+                          }}>
+                            <td style={{
+                              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                              padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left',
+                              verticalAlign: 'top', whiteSpace: 'nowrap',
+                            }}>
+                              <span style={{ fontSize: '14px', fontWeight: 600, color: L.ehHoje ? C.amber : L.fds ? C.soft : C.ink }}>
+                                {String(L.dia).padStart(2, '0')}
+                              </span>
+                              <span style={{ fontSize: '10px', color: C.soft, marginLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                {DIAS_SEM[L.sem]}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left', verticalAlign: 'top' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
+                                {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                                {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                                {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
+                              </div>
+                            </td>
+                            <td style={{ padding: '8px 10px', borderBottom: '1px solid #E2E6DE', verticalAlign: 'top' }}>
+                              <Lancamentos
+                                tema={T}
+                                lancs={L.lancs}
+                                onCampo={(id, campo, v) => setLancamento(L.dia, id, campo, v)}
+                                onDel={(id) => delLancamento(L.dia, id)}
+                                onAdd={(tipo) => addLancamento(L.dia, tipo)}
+                              />
+                            </td>
+                            <td style={{
+                              textAlign: 'right', fontFamily: "'IBM Plex Mono', monospace",
+                              fontVariantNumeric: 'tabular-nums', fontSize: '14px', fontWeight: 600,
+                              padding: '10px 14px', borderBottom: '1px solid #E2E6DE',
+                              background: cor.bg, color: cor.fg, whiteSpace: 'nowrap', verticalAlign: 'top',
+                            }}>
+                              {brl(L.saldo)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <p style={{ fontSize: '12px', color: C.soft, lineHeight: 1.6 }}>
+              Fundo escuro é folga, claro é aperto, rosa é dia no vermelho. A marca âmbar indica hoje.
+            </p>
+          </>
         )}
 
-          </>
+        {/* ═══════════ ABA: CONTAS ═══════════ */}
+        {aba === 'contas' && (
+          <div style={{
+            border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
+            padding: ehMobile ? '14px' : '16px 18px',
+          }}>
+            <CabecalhoSecao
+              titulo="Ganhos, contas e parcelas"
+              subtitulo={<>Os valores são de <strong>{MESES[mes].toLowerCase()}{outroAno ? ` de ${anoVisto}` : ''}</strong>. Se você não mexer num mês, ele repete o valor do mês anterior — então só edite quando a conta mudar.</>}
+              aberta={secoes.contas}
+              onToggle={() => alternar('contas')}
+              cor={T.forte}
+            />
+
+            {secoes.contas && (
+              <>
+                <Bloco cor={C.deep} fundo="#DCEEE4" titulo="Entra">
+                  <TabelaItens
+                    itens={d.rendas}
+                    exemploNome="ex: Salário"
+                    mes={absVisto}
+                    onNome={(id, v) => setPadrao('rendas', id, 'nome', v)}
+                    onDia={(id, v) => setPadrao('rendas', id, 'dia', v)}
+                    onValor={(id, v) => setValorDoMes('rendas', id, v)}
+                    onHerdar={(id) => voltarAHerdar('rendas', id)}
+                    onDel={(id) => delLinha('rendas', id)}
+                    onReordenar={(de, para) => reordenar('rendas', de, para)}
+                  />
+                  <BotaoAdd onClick={() => addLinha('rendas')}>+ Outra entrada</BotaoAdd>
+                  <Total label="Total que entra" valor={brl(r.ganhos)} cor={C.deep} />
+                </Bloco>
+
+                <Bloco cor={C.steel} fundo="#E1E7EF" titulo="Sai todo mês (contas fixas)">
+                  <TabelaItens
+                    itens={d.fixos}
+                    exemploNome="ex: Aluguel"
+                    mes={absVisto}
+                    onNome={(id, v) => setPadrao('fixos', id, 'nome', v)}
+                    onDia={(id, v) => setPadrao('fixos', id, 'dia', v)}
+                    onValor={(id, v) => setValorDoMes('fixos', id, v)}
+                    onHerdar={(id) => voltarAHerdar('fixos', id)}
+                    onDel={(id) => delLinha('fixos', id)}
+                    onReordenar={(de, para) => reordenar('fixos', de, para)}
+                  />
+                  <BotaoAdd onClick={() => addLinha('fixos')}>+ Outra conta fixa</BotaoAdd>
+                  <Total label="Total de contas fixas" valor={brl(r.fixos)} cor={C.steel} />
+                </Bloco>
+
+                <Bloco cor={C.amber} fundo="#F3E6CC" titulo="Contas variáveis">
+                  <p style={{ fontSize: '12px', color: C.soft, marginTop: '-4px', marginBottom: '12px', lineHeight: 1.6 }}>
+                    Gastos cujo valor você não sabe de antemão. Marque uma categoria para acompanhar no
+                    ranking do mês.
+                  </p>
+                  <TabelaItens
+                    itens={d.contasVariaveis}
+                    exemploNome="ex: Rodízio japonês"
+                    comCategoria
+                    categorias={categoriasUsadas}
+                    mes={absVisto}
+                    onNome={(id, v) => setPadrao('contasVariaveis', id, 'nome', v)}
+                    onDia={(id, v) => setPadrao('contasVariaveis', id, 'dia', v)}
+                    onValor={(id, v) => setValorDoMes('contasVariaveis', id, v)}
+                    onHerdar={(id) => voltarAHerdar('contasVariaveis', id)}
+                    onCategoria={(id, v) => setPadrao('contasVariaveis', id, 'categoria', v)}
+                    onDel={(id) => delLinha('contasVariaveis', id)}
+                    onReordenar={(de, para) => reordenar('contasVariaveis', de, para)}
+                  />
+                  <BotaoAdd onClick={() => addLinha('contasVariaveis')}>+ Outra conta variável</BotaoAdd>
+                  <Total label="Total de contas variáveis" valor={brl(r.variaveisPlanejadas ?? 0)} cor={C.amber} />
+                </Bloco>
+
+                <Bloco cor={C.clay} fundo="#F0E3DA" titulo="Compras parceladas">
+                  <p style={{ fontSize: '12px', color: C.soft, marginTop: '-4px', marginBottom: '12px', lineHeight: 1.6 }}>
+                    Informe o valor de <strong>uma</strong> parcela e quantas são. O app conta sozinho e
+                    para na última — some da base diária enquanto durar.
+                  </p>
+                  <TabelaItens
+                    itens={d.parcelas || []}
+                    exemploNome="ex: Geladeira"
+                    comParcelas
+                    mes={absVisto}
+                    ano={anoVisto}
+                    onNome={(id, v) => setPadrao('parcelas', id, 'nome', v)}
+                    onDia={(id, v) => setPadrao('parcelas', id, 'dia', v)}
+                    onValor={(id, v) => setPadrao('parcelas', id, 'valor', v)}
+                    onQuantidade={(id, v) => setPadrao('parcelas', id, 'quantidade', v)}
+                    onMesInicio={(id, v) => setPadrao('parcelas', id, 'mesInicio', v)}
+                    onDel={(id) => delLinha('parcelas', id)}
+                    onReordenar={(de, para) => reordenar('parcelas', de, para)}
+                  />
+                  <BotaoAdd onClick={() => addLinha('parcelas')}>+ Outra compra parcelada</BotaoAdd>
+                  <Total label={`Parcelas em ${MESES[mes].toLowerCase()}`} valor={brl(r.parcelas ?? 0)} cor={C.clay} />
+                </Bloco>
+              </>
+            )}
+          </div>
         )}
 
         <datalist id="cd-categorias">
           {categoriasUsadas.map((c) => <option key={c} value={c} />)}
         </datalist>
-
-        <p style={{ fontSize: '12px', color: C.soft, marginTop: '14px', lineHeight: 1.6 }}>
-          Verde escuro é folga, verde claro é aperto, rosa é dia no vermelho. A marca âmbar indica hoje.
-        </p>
-
-        {/* painéis de resumo */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: ehMobile ? '1fr' : 'repeat(auto-fit, minmax(300px, 1fr))',
-          gap: '18px', marginTop: '18px',
-        }}>
-          <div style={{
-            border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
-            padding: ehMobile ? '14px' : '16px 18px',
-          }}>
-            <CabecalhoSecao
-              titulo={`Para onde foi em ${MESES[mes].toLowerCase()}`}
-              subtitulo="Ranking por categoria — contas variáveis e gastos avulsos somados."
-              aberta={secoes.ranking}
-              onToggle={() => alternar('ranking')}
-              cor={C.vinho}
-            />
-            <div style={{ height: '12px' }} />
-            {!secoes.ranking ? null : catsOrdenadas.length === 0 ? (
-              <p style={{ fontSize: '12px', color: C.soft, lineHeight: 1.6 }}>
-                Nada lançado ainda. O primeiro gasto com categoria aparece aqui.
-              </p>
-            ) : (
-              catsOrdenadas.map(([c, v], idx) => (
-                <div key={c} style={{
-                  display: 'grid', gridTemplateColumns: '22px 1fr auto', gap: '10px',
-                  alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #E4E8E0',
-                }}>
-                  <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px',
-                    fontWeight: 700, color: idx === 0 ? C.vinho : C.soft,
-                  }}>
-                    {idx + 1}º
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: '13px', fontWeight: idx === 0 ? 600 : 400 }}>{c}</div>
-                    <div style={{
-                      height: '6px', borderRadius: '3px', background: C.vinho, marginTop: '5px',
-                      width: `${Math.max(4, (v / maxCat) * 100)}%`, opacity: idx === 0 ? 1 : 0.75,
-                    }} />
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                      fontSize: '13px', fontWeight: 600,
-                    }}>
-                      {brl(v)}
-                    </div>
-                    <div style={{ fontSize: '10.5px', color: C.soft }}>
-                      {totalCats > 0 ? Math.round((v / totalCats) * 100) : 0}%
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div style={{
-            border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
-            padding: ehMobile ? '14px' : '16px 18px',
-          }}>
-            <CabecalhoSecao
-              titulo={`Fechamento de cada mês de ${anoVisto}`}
-              subtitulo="Saldo no último dia."
-              aberta={secoes.fechamento}
-              onToggle={() => alternar('fechamento')}
-              cor={T.forte}
-            />
-            <div style={{ height: '12px' }} />
-            {secoes.fechamento && MESES.map((m, i) => {
-              const absI = absMes(anoVisto, i);
-              const x = calc.porMes[absI] || { fim: 0 };
-              const doAno = MESES.map((_, j) => calc.porMes[absMes(anoVisto, j)]?.fim || 0);
-              const maxAno = Math.max(1, ...doAno.map((y) => Math.abs(y)));
-              return (
-                <div
-                  key={m}
-                  onClick={() => setMes(i)}
-                  style={{
-                    display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px', alignItems: 'center',
-                    padding: '7px 0', borderBottom: '1px solid #E4E8E0', cursor: 'pointer',
-                    opacity: absI < mesInicialAbs ? 0.5 : 1,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: i === mes ? 600 : 400 }}>{m}</div>
-                    <div style={{
-                      height: '5px', borderRadius: '3px',
-                      background: x.fim < 0 ? C.rose : T.medio, marginTop: '5px',
-                      width: `${Math.max(3, (Math.abs(x.fim) / maxAno) * 100)}%`,
-                    }} />
-                  </div>
-                  <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                    fontSize: '13px', fontWeight: 600, color: x.fim < 0 ? C.rose : C.ink,
-                  }}>
-                    {brl(x.fim)}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
       </div>
+
+      {/* ───── abas fixas no rodapé, no celular ───── */}
+      {ehMobile && (
+        <nav style={{
+          position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20,
+          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+          background: T.card, borderTop: `1px solid ${T.rule}`,
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}>
+          {ABAS.map((a) => {
+            const ativa = aba === a.id;
+            return (
+              <button key={a.id} onClick={() => setAba(a.id)} aria-current={ativa} style={{
+                border: 0, background: 'transparent', cursor: 'pointer',
+                padding: '11px 4px 13px', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', gap: '3px',
+                color: ativa ? T.forte : C.soft,
+              }}>
+                <span aria-hidden="true" style={{ fontSize: '15px', lineHeight: 1, opacity: ativa ? 1 : 0.6 }}>
+                  {a.icone}
+                </span>
+                <span style={{ fontSize: '11px', fontWeight: ativa ? 600 : 400 }}>{a.rotulo}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
     </div>
   );
 }
 
-// Cabeçalho de seção: título, subtítulo e uma seta discreta para encolher/expandir.
 function CabecalhoSecao({ titulo, subtitulo, aberta, onToggle, cor }) {
   return (
     <button
