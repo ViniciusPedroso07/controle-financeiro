@@ -597,6 +597,114 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
     </div>
   );
 
+  // Navegação de tempo (ano + meses). Fica em posições diferentes conforme a
+  // aba: no Hoje vem depois dos atalhos; nas outras, logo no topo.
+  const NavegacaoTempo = () => (
+    <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+          {anosDisponiveis.map((a) => {
+            const ativo = a === anoVisto;
+            const ehAtual = a === anoAtual;
+            const corAtiva = ehAtual ? C.ink : C.azul;
+            return (
+              <button key={a} onClick={() => setAnoVisto(a)} aria-pressed={ativo} style={{
+                border: `1px solid ${ativo ? corAtiva : T.rule}`,
+                background: ativo ? corAtiva : 'transparent',
+                color: ativo ? '#fff' : ehAtual ? C.ink : C.azulMedio,
+                borderRadius: '20px', padding: '6px 14px', cursor: 'pointer',
+                fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                fontSize: '12.5px', fontWeight: 600, letterSpacing: '0.04em',
+              }}>
+                {a}
+              </button>
+            );
+          })}
+          {!ehMesCorrente && (
+            <button onClick={irParaHoje} style={{
+              border: 0, background: 'transparent', color: T.forte, cursor: 'pointer',
+              fontSize: '12px', fontWeight: 600, textDecoration: 'underline', padding: '6px 2px',
+            }}>
+              ir para hoje
+            </button>
+          )}
+        </div>
+
+        {outroAno && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '10px',
+            border: `1px solid ${C.azulPale}`, borderLeft: `4px solid ${C.azul}`,
+            background: C.azulBg, borderRadius: '10px', padding: '10px 13px', marginBottom: '14px',
+          }}>
+            <span aria-hidden="true" style={{ fontSize: '14px', lineHeight: 1, color: C.azul }}>
+              {anoVisto > anoAtual ? '↗' : '↩'}
+            </span>
+            <div style={{ fontSize: '12.5px', color: C.azul, lineHeight: 1.5 }}>
+              Você está em <strong>{anoVisto}</strong>. O saldo vem acumulado de {anoVisto - 1} e as contas
+              repetem o último valor informado.
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginBottom: '22px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+            <span style={{
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px', letterSpacing: '0.12em',
+              textTransform: 'uppercase', color: outroAno ? C.azulMedio : C.soft,
+            }}>
+              Meses de {anoVisto}
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: C.soft }}>
+              arraste
+              <span aria-hidden="true" style={{ fontSize: '13px', lineHeight: 1 }}>↔</span>
+            </span>
+          </div>
+
+          <div style={{ position: 'relative' }}>
+            <div ref={trilhaRef} style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '6px', paddingRight: '26px' }}>
+              {MESES.map((m, i) => {
+                const abs = absMes(anoVisto, i);
+                const info = calc.porMes[abs];
+                const v = info ? info.fim : 0;
+                const on = i === mes;
+                const desativado = abs < mesInicialAbs;
+                const corAtiva = outroAno ? C.azul : C.ink;
+                return (
+                  <button key={m} ref={on ? mesAtivoRef : null} onClick={() => setMes(i)} style={{
+                    flex: '1 0 auto', minWidth: '66px',
+                    border: `1px solid ${on ? corAtiva : T.rule}`,
+                    background: on ? corAtiva : 'transparent',
+                    borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
+                    opacity: desativado && !on ? 0.45 : 1,
+                  }}>
+                    <div style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', letterSpacing: '0.1em',
+                      textTransform: 'uppercase',
+                      color: on ? 'rgba(255,255,255,.7)' : outroAno ? C.azulMedio : C.soft,
+                    }}>
+                      {ABREV[i]}
+                    </div>
+                    <div style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '13px', fontWeight: 600, marginTop: '3px',
+                      color: on ? (v < 0 ? '#F0A9A3' : outroAno ? '#A8CBE8' : '#8FD9BE') : v < 0 ? C.rose : T.forte,
+                    }}>
+                      {Vc(v)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div aria-hidden="true" style={{
+              position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
+              background: `linear-gradient(to right, rgba(255,255,255,0), ${T.paper})`,
+              pointerEvents: 'none',
+            }} />
+          </div>
+        </div>
+
+    </>
+  );
+
   // Ícone circular contornado, no padrão dos apps de banco
   const IconeFaixa = ({ onClick, rotulo, children }) => (
     <button
@@ -839,108 +947,6 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
           </div>
         )}
 
-        {/* ───── ano e mês, compartilhados por todas as abas ───── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
-          {anosDisponiveis.map((a) => {
-            const ativo = a === anoVisto;
-            const ehAtual = a === anoAtual;
-            const corAtiva = ehAtual ? C.ink : C.azul;
-            return (
-              <button key={a} onClick={() => setAnoVisto(a)} aria-pressed={ativo} style={{
-                border: `1px solid ${ativo ? corAtiva : T.rule}`,
-                background: ativo ? corAtiva : 'transparent',
-                color: ativo ? '#fff' : ehAtual ? C.ink : C.azulMedio,
-                borderRadius: '20px', padding: '6px 14px', cursor: 'pointer',
-                fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                fontSize: '12.5px', fontWeight: 600, letterSpacing: '0.04em',
-              }}>
-                {a}
-              </button>
-            );
-          })}
-          {!ehMesCorrente && (
-            <button onClick={irParaHoje} style={{
-              border: 0, background: 'transparent', color: T.forte, cursor: 'pointer',
-              fontSize: '12px', fontWeight: 600, textDecoration: 'underline', padding: '6px 2px',
-            }}>
-              ir para hoje
-            </button>
-          )}
-        </div>
-
-        {outroAno && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '10px',
-            border: `1px solid ${C.azulPale}`, borderLeft: `4px solid ${C.azul}`,
-            background: C.azulBg, borderRadius: '10px', padding: '10px 13px', marginBottom: '14px',
-          }}>
-            <span aria-hidden="true" style={{ fontSize: '14px', lineHeight: 1, color: C.azul }}>
-              {anoVisto > anoAtual ? '↗' : '↩'}
-            </span>
-            <div style={{ fontSize: '12.5px', color: C.azul, lineHeight: 1.5 }}>
-              Você está em <strong>{anoVisto}</strong>. O saldo vem acumulado de {anoVisto - 1} e as contas
-              repetem o último valor informado.
-            </div>
-          </div>
-        )}
-
-        <div style={{ marginBottom: '18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px', letterSpacing: '0.12em',
-              textTransform: 'uppercase', color: outroAno ? C.azulMedio : C.soft,
-            }}>
-              Meses de {anoVisto}
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: C.soft }}>
-              arraste
-              <span aria-hidden="true" style={{ fontSize: '13px', lineHeight: 1 }}>↔</span>
-            </span>
-          </div>
-
-          <div style={{ position: 'relative' }}>
-            <div ref={trilhaRef} style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '6px', paddingRight: '26px' }}>
-              {MESES.map((m, i) => {
-                const abs = absMes(anoVisto, i);
-                const info = calc.porMes[abs];
-                const v = info ? info.fim : 0;
-                const on = i === mes;
-                const desativado = abs < mesInicialAbs;
-                const corAtiva = outroAno ? C.azul : C.ink;
-                return (
-                  <button key={m} ref={on ? mesAtivoRef : null} onClick={() => setMes(i)} style={{
-                    flex: '1 0 auto', minWidth: '66px',
-                    border: `1px solid ${on ? corAtiva : T.rule}`,
-                    background: on ? corAtiva : 'transparent',
-                    borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
-                    opacity: desativado && !on ? 0.45 : 1,
-                  }}>
-                    <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', letterSpacing: '0.1em',
-                      textTransform: 'uppercase',
-                      color: on ? 'rgba(255,255,255,.7)' : outroAno ? C.azulMedio : C.soft,
-                    }}>
-                      {ABREV[i]}
-                    </div>
-                    <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                      fontSize: '13px', fontWeight: 600, marginTop: '3px',
-                      color: on ? (v < 0 ? '#F0A9A3' : outroAno ? '#A8CBE8' : '#8FD9BE') : v < 0 ? C.rose : T.forte,
-                    }}>
-                      {Vc(v)}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <div aria-hidden="true" style={{
-              position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
-              background: `linear-gradient(to right, rgba(255,255,255,0), ${T.paper})`,
-              pointerEvents: 'none',
-            }} />
-          </div>
-        </div>
-
         {aviso && (
           <div style={{
             border: `1px solid ${C.rosePale}`, background: C.rosePale, color: C.rose,
@@ -1044,6 +1050,8 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                     </button>
                   ))}
                 </div>
+
+                <NavegacaoTempo />
 
                 {/* ── quanto dá para gastar: conclusão, não abertura ── */}
                 <div style={{
@@ -1200,6 +1208,8 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
         {/* ═══════════ ABA: CALENDÁRIO ═══════════ */}
         {aba === 'calendario' && (
           <>
+            <NavegacaoTempo />
+
             <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 14px', lineHeight: 1.5 }}>
               Adicione quantos lançamentos quiser em cada dia. O resto entra sozinho.
             </p>
@@ -1353,6 +1363,8 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
         {/* ═══════════ ABA: CONTAS ═══════════ */}
         {aba === 'contas' && (
           <div>
+            <NavegacaoTempo />
+
             <p style={{ fontSize: '12px', color: C.soft, margin: '0 0 4px', lineHeight: 1.55 }}>
               Se você não mexer num mês, ele repete o valor do mês anterior — então só edite quando a
               conta mudar.
