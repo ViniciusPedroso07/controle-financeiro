@@ -160,6 +160,26 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
   const [secoes, setSecoes] = useState({ contas: true, ranking: true, fechamento: false });
   const [listaMeses, setListaMeses] = useState(false);
   const [mostrarFamilia, setMostrarFamilia] = useState(false);
+  const [mostrarMenu, setMostrarMenu] = useState(false);
+  const [mostrarValores, setMostrarValores] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const salvo = window.localStorage?.getItem('vistta:mostrarValores');
+    return salvo === null ? true : salvo === '1';
+  });
+
+  const alternarValores = () => {
+    setMostrarValores((prev) => {
+      const novo = !prev;
+      try { window.localStorage?.setItem('vistta:mostrarValores', novo ? '1' : '0'); } catch {}
+      return novo;
+    });
+  };
+
+  // Máscara de privacidade: quando o olho está fechado, todo valor em R$
+  // exibido na tela vira bolinhas — os números continuam calculados
+  // normalmente por trás, só a exibição muda.
+  const V = (n) => (mostrarValores ? brl(n) : 'R$ ••••');
+  const Vc = (n) => (mostrarValores ? curto(n) : '••');
   const alternar = (chave) => setSecoes((p) => ({ ...p, [chave]: !p[chave] }));
   const syncRef = useRef(null);
   const trilhaRef = useRef(null);
@@ -547,8 +567,6 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
       padding: ehMobile ? '0 12px 24px' : '20px 16px 56px',
       WebkitFontSmoothing: 'antialiased',
       transition: 'background .25s ease',
-      overflowX: 'hidden',
-      width: '100%',
     }}>
       <style>{`
         html, body { overflow-x: hidden; width: 100%; overscroll-behavior-x: none; }
@@ -581,24 +599,20 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
             </button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button onClick={() => setMostrarFamilia(true)} style={{
-              border: `1px solid ${T.rule}`, background: 'transparent', color: C.ink,
-              borderRadius: '8px', padding: '6px 11px', fontSize: '12px', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: '5px',
-            }}>
-              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            <button
+              onClick={() => setMostrarMenu(true)}
+              aria-label="Abrir menu"
+              style={{
+                border: `1px solid ${T.rule}`, background: 'transparent', color: C.ink,
+                borderRadius: '8px', width: '34px', height: '34px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
               </svg>
-              Membros
-            </button>
-            <button onClick={onSair} style={{
-              border: `1px solid ${T.rule}`, background: 'transparent', color: C.soft,
-              borderRadius: '8px', padding: '6px 11px', fontSize: '12px', cursor: 'pointer',
-            }}>
-              Sair
             </button>
           </div>
         </div>
@@ -608,6 +622,17 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
       <div style={{ maxWidth: '1180px', margin: '0 auto' }}>
         {mostrarFamilia && (
           <PainelFamilia supabase={supabase} onFechar={() => setMostrarFamilia(false)} tema={T} />
+        )}
+
+        {mostrarMenu && (
+          <PainelMenu
+            tema={T}
+            abaAtual={aba}
+            onIrPara={(a) => { setAba(a); setMostrarMenu(false); }}
+            onAbrirFamilia={() => { setMostrarMenu(false); setMostrarFamilia(true); }}
+            onSair={onSair}
+            onFechar={() => setMostrarMenu(false)}
+          />
         )}
 
         {/* abas no desktop ficam no topo */}
@@ -719,7 +744,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                       fontSize: '13px', fontWeight: 600, marginTop: '3px',
                       color: on ? (v < 0 ? '#F0A9A3' : outroAno ? '#A8CBE8' : '#8FD9BE') : v < 0 ? C.rose : T.forte,
                     }}>
-                      {curto(v)}
+                      {Vc(v)}
                     </div>
                   </button>
                 );
@@ -772,43 +797,65 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   padding: ehMobile ? '22px 18px' : '28px 24px', textAlign: 'center', marginBottom: '12px',
                 }}>
                   <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
                     fontFamily: "'IBM Plex Mono', monospace", fontSize: '10.5px', letterSpacing: '0.14em',
                     textTransform: 'uppercase', color: C.soft, marginBottom: '10px',
                   }}>
                     {ehMesCorrente ? 'Posso gastar hoje' : `Média por dia em ${MESES[mes].toLowerCase()}`}
+                    <button
+                      onClick={alternarValores}
+                      aria-label={mostrarValores ? 'Ocultar valores' : 'Mostrar valores'}
+                      aria-pressed={!mostrarValores}
+                      style={{
+                        border: 0, background: 'transparent', color: C.soft, cursor: 'pointer',
+                        padding: '3px', display: 'flex', alignItems: 'center', lineHeight: 0,
+                      }}
+                    >
+                      {mostrarValores ? (
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      ) : (
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a20.3 20.3 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a20.3 20.3 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      )}
+                    </button>
                   </div>
                   <div style={{
                     fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
                     fontWeight: 600, fontSize: 'clamp(34px, 11vw, 56px)', lineHeight: 1, letterSpacing: '-0.02em',
                     color: (ehMesCorrente ? sobrouHoje : r.baseDia) < 0 ? C.rose : T.forte,
                   }}>
-                    {brl(ehMesCorrente ? sobrouHoje : r.baseDia)}
+                    {V(ehMesCorrente ? sobrouHoje : r.baseDia)}
                   </div>
 
                   {ehMesCorrente && (
                     <div style={{ fontSize: '12.5px', color: C.soft, marginTop: '12px', lineHeight: 1.6 }}>
                       {gastoDeHoje > 0 ? (
-                        <>Você já gastou <strong style={{ color: C.rose }}>{brl(gastoDeHoje)}</strong> hoje,
-                        de um limite de {brl(podeHoje)}.</>
+                        <>Você já gastou <strong style={{ color: C.rose }}>{V(gastoDeHoje)}</strong> hoje,
+                        de um limite de {V(podeHoje)}.</>
                       ) : (
-                        <>Sobram <strong>{brl(r.sobra)}</strong> para os {diasRestantes}{' '}
+                        <>Sobram <strong>{V(r.sobra)}</strong> para os {diasRestantes}{' '}
                         {diasRestantes === 1 ? 'dia restante' : 'dias restantes'} do mês.</>
                       )}
                     </div>
                   )}
                   {!ehMesCorrente && (
                     <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', color: C.soft, marginTop: '10px' }}>
-                      ({brl(r.ganhos)} − {brl(r.fixos)} de fixas
-                      {r.parcelas > 0 ? ` − ${brl(r.parcelas)} de parcelas` : ''}) ÷ {totalDias} dias
+                      ({V(r.ganhos)} − {V(r.fixos)} de fixas
+                      {r.parcelas > 0 ? ` − ${V(r.parcelas)} de parcelas` : ''}) ÷ {totalDias} dias
                     </div>
                   )}
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: ehMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: '10px', marginBottom: '18px' }}>
-                  <Caixa lab={`Fim de ${ABREV[mes]}`} val={brl(r.fim)} cor={r.fim < 0 ? C.rose : T.forte} />
-                  <Caixa lab="Sobra do mês" val={brl(r.sobra)} cor={r.sobra < 0 ? C.rose : T.forte} />
-                  <Caixa lab="Já gasto no mês" val={brl(r.variaveis)} cor={C.vinho} />
-                  <Caixa lab="Comprometido" val={brl(r.fixos + r.parcelas)} cor={C.steel} />
+                  <Caixa lab={`Fim de ${ABREV[mes]}`} val={V(r.fim)} cor={r.fim < 0 ? C.rose : T.forte} />
+                  <Caixa lab="Sobra do mês" val={V(r.sobra)} cor={r.sobra < 0 ? C.rose : T.forte} />
+                  <Caixa lab="Já gasto no mês" val={V(r.variaveis)} cor={C.vinho} />
+                  <Caixa lab="Comprometido" val={V(r.fixos + r.parcelas)} cor={C.steel} />
                 </div>
 
                 <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
@@ -879,7 +926,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums', fontSize: '13px', fontWeight: 600 }}>
-                            {brl(v)}
+                            {V(v)}
                           </div>
                           <div style={{ fontSize: '10.5px', color: C.soft }}>
                             {totalCats > 0 ? Math.round((v / totalCats) * 100) : 0}%
@@ -926,7 +973,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                           fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
                           fontSize: '13px', fontWeight: 600, color: x.fim < 0 ? C.rose : C.ink,
                         }}>
-                          {brl(x.fim)}
+                          {V(x.fim)}
                         </div>
                       </div>
                     );
@@ -1006,7 +1053,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                               fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
                               fontSize: '12px', fontWeight: 600, color: v < 0 ? C.rose : T.forte,
                             }}>
-                              {curto(v)}
+                              {Vc(v)}
                             </span>
                           </button>
                         );
@@ -1020,7 +1067,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                 fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
                 fontSize: '13px', fontWeight: 600, color: r.fim < 0 ? C.rose : T.forte,
               }}>
-                fecha em {brl(r.fim)}
+                fecha em {V(r.fim)}
               </div>
             </div>
 
@@ -1063,16 +1110,16 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                             fontSize: '14px', fontWeight: 700, background: cor.bg, color: cor.fg,
                             padding: '4px 9px', borderRadius: '7px', whiteSpace: 'nowrap',
                           }}>
-                            {brl(L.saldo)}
+                            {V(L.saldo)}
                           </span>
                         </div>
 
                         {temAuto > 0 && (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
-                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
-                            {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
-                            {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
-                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
+                            {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${Vc(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
+                            {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${Vc(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                            {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${Vc(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                            {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${Vc(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
                           </div>
                         )}
 
@@ -1132,10 +1179,10 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                             </td>
                             <td style={{ padding: '10px', borderBottom: '1px solid #E2E6DE', textAlign: 'left', verticalAlign: 'top' }}>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                                {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${curto(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
-                                {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${curto(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
-                                {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${curto(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
-                                {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${curto(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
+                                {L.ents.map((x) => <React.Fragment key={x.id}>{etiqueta(`+ ${x.nome || 'entrada'} ${Vc(num(valorNoMes(x, absVisto)))}`, T.pale, T.forte)}</React.Fragment>)}
+                                {L.fixs.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'conta'} ${Vc(num(valorNoMes(x, absVisto)))}`, '#E6E9E2', C.soft)}</React.Fragment>)}
+                                {L.vars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'variável'} ${Vc(num(valorNoMes(x, absVisto)))}`, '#F3E6CC', C.amber)}</React.Fragment>)}
+                                {L.pars.map((x) => <React.Fragment key={x.id}>{etiqueta(`− ${x.nome || 'parcela'} ${numeroDaParcela(x, absVisto)}/${x.quantidade} ${Vc(num(x.valor))}`, '#F0E3DA', C.clay)}</React.Fragment>)}
                               </div>
                             </td>
                             <td style={{ padding: '8px 10px', borderBottom: '1px solid #E2E6DE', verticalAlign: 'top' }}>
@@ -1153,7 +1200,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                               padding: '10px 14px', borderBottom: '1px solid #E2E6DE',
                               background: cor.bg, color: cor.fg, whiteSpace: 'nowrap', verticalAlign: 'top',
                             }}>
-                              {brl(L.saldo)}
+                              {V(L.saldo)}
                             </td>
                           </tr>
                         );
@@ -1199,7 +1246,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                     onReordenar={(de, para) => reordenar('rendas', de, para)}
                   />
                   <BotaoAdd onClick={() => addLinha('rendas')}>+ Outra entrada</BotaoAdd>
-                  <Total label="Total que entra" valor={brl(r.ganhos)} cor={C.deep} />
+                  <Total label="Total que entra" valor={V(r.ganhos)} cor={C.deep} />
                 </Bloco>
 
                 <Bloco cor={C.steel} fundo="#E1E7EF" titulo="Sai todo mês (contas fixas)">
@@ -1215,7 +1262,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                     onReordenar={(de, para) => reordenar('fixos', de, para)}
                   />
                   <BotaoAdd onClick={() => addLinha('fixos')}>+ Outra conta fixa</BotaoAdd>
-                  <Total label="Total de contas fixas" valor={brl(r.fixos)} cor={C.steel} />
+                  <Total label="Total de contas fixas" valor={V(r.fixos)} cor={C.steel} />
                 </Bloco>
 
                 <Bloco cor={C.amber} fundo="#F3E6CC" titulo="Contas variáveis">
@@ -1238,7 +1285,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                     onReordenar={(de, para) => reordenar('contasVariaveis', de, para)}
                   />
                   <BotaoAdd onClick={() => addLinha('contasVariaveis')}>+ Outra conta variável</BotaoAdd>
-                  <Total label="Total de contas variáveis" valor={brl(r.variaveisPlanejadas ?? 0)} cor={C.amber} />
+                  <Total label="Total de contas variáveis" valor={V(r.variaveisPlanejadas ?? 0)} cor={C.amber} />
                 </Bloco>
 
                 <Bloco cor={C.clay} fundo="#F0E3DA" titulo="Compras parceladas">
@@ -1261,7 +1308,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                     onReordenar={(de, para) => reordenar('parcelas', de, para)}
                   />
                   <BotaoAdd onClick={() => addLinha('parcelas')}>+ Outra compra parcelada</BotaoAdd>
-                  <Total label={`Parcelas em ${MESES[mes].toLowerCase()}`} valor={brl(r.parcelas ?? 0)} cor={C.clay} />
+                  <Total label={`Parcelas em ${MESES[mes].toLowerCase()}`} valor={V(r.parcelas ?? 0)} cor={C.clay} />
                 </Bloco>
               </>
             )}
@@ -1273,35 +1320,46 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
         </datalist>
       </div>
 
-      {/* ───── abas fixas no rodapé, no celular ─────
-          "sticky" em vez de "fixed": no Safari do iPhone, uma barra "fixed"
-          pula quando a barra de endereço aparece/some ao rolar. Com "sticky"
-          dentro do fluxo normal da página, ela fica firme, sem dançar. ───── */}
+      {/* ───── menu flutuante no rodapé, no celular ─────
+          Pílula compacta (estilo Nubank), não a largura toda da tela.
+          "sticky" faz ela acompanhar a rolagem sem o pulo que "fixed"
+          causa no Safari do iPhone quando a barra de endereço esconde. ───── */}
       {ehMobile && (
-        <nav style={{
-          position: 'sticky', left: 0, right: 0, bottom: 0, zIndex: 20,
-          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-          background: T.card, borderTop: `1px solid ${T.rule}`,
-          paddingBottom: 'env(safe-area-inset-bottom)',
-          margin: '18px -12px 0',
+        <div style={{
+          position: 'sticky', bottom: 0, zIndex: 20,
+          display: 'flex', justifyContent: 'center',
+          paddingTop: '10px',
+          paddingBottom: `calc(14px + env(safe-area-inset-bottom))`,
+          pointerEvents: 'none',
         }}>
-          {ABAS.map((a) => {
-            const ativa = aba === a.id;
-            return (
-              <button key={a.id} onClick={() => setAba(a.id)} aria-current={ativa} style={{
-                border: 0, background: 'transparent', cursor: 'pointer',
-                padding: '11px 4px 13px', display: 'flex', flexDirection: 'column',
-                alignItems: 'center', gap: '3px',
-                color: ativa ? T.forte : C.soft,
-              }}>
-                <span aria-hidden="true" style={{ fontSize: '15px', lineHeight: 1, opacity: ativa ? 1 : 0.6 }}>
-                  {a.icone}
-                </span>
-                <span style={{ fontSize: '11px', fontWeight: ativa ? 600 : 400 }}>{a.rotulo}</span>
-              </button>
-            );
-          })}
-        </nav>
+          <nav style={{
+            pointerEvents: 'auto',
+            display: 'flex', gap: '2px',
+            background: T.card, border: `1px solid ${T.rule}`,
+            borderRadius: '999px', padding: '5px',
+            boxShadow: '0 10px 28px rgba(18,33,28,.18)',
+          }}>
+            {ABAS.map((a) => {
+              const ativa = aba === a.id;
+              return (
+                <button key={a.id} onClick={() => setAba(a.id)} aria-current={ativa} style={{
+                  border: 0, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: ativa ? '9px 15px' : '9px 13px',
+                  borderRadius: '999px',
+                  background: ativa ? T.forte : 'transparent',
+                  color: ativa ? '#fff' : C.soft,
+                  fontSize: '12.5px', fontWeight: ativa ? 600 : 500,
+                  transition: 'background .18s ease, color .18s ease, padding .18s ease',
+                  whiteSpace: 'nowrap',
+                }}>
+                  <span aria-hidden="true" style={{ fontSize: '14px', lineHeight: 1 }}>{a.icone}</span>
+                  {ativa && <span>{a.rotulo}</span>}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
       )}
     </div>
   );
@@ -1656,7 +1714,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
 
                     {num(item.valor) > 0 && qtd > 0 && (
                       <div style={{ fontSize: '10.5px', color: C.soft, marginTop: '6px', lineHeight: 1.6 }}>
-                        {qtd}x de {brl(num(item.valor))} = <strong style={{ color: C.clay }}>{brl(num(item.valor) * qtd)}</strong>
+                        {qtd}x de {V(num(item.valor))} = <strong style={{ color: C.clay }}>{V(num(item.valor) * qtd)}</strong>
                         {' · '}
                         {ativa
                           ? `${numAtual}ª parcela`
@@ -2013,6 +2071,87 @@ function PainelFamilia({ supabase, onFechar, tema }) {
             {erro}
           </div>
         )}
+      </div>
+    </>
+  );
+}
+
+// Menu principal: as três seções do app (cada uma com seta, como um menu de
+// navegação de verdade), depois Membros da família e Sair.
+function PainelMenu({ tema, abaAtual, onIrPara, onAbrirFamilia, onSair, onFechar }) {
+  const T = tema || { forte: C.deep, rule: C.rule };
+
+  const Linha = ({ onClick, icone, texto, destaque, cor }) => (
+    <button onClick={onClick} style={{
+      width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: '10px', border: 0, background: destaque ? T.pale : 'transparent',
+      borderRadius: '10px', padding: '13px 14px', cursor: 'pointer', textAlign: 'left',
+    }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: '11px' }}>
+        <span aria-hidden="true" style={{ color: cor || (destaque ? T.forte : C.soft), display: 'flex' }}>
+          {icone}
+        </span>
+        <span style={{ fontSize: '14px', fontWeight: destaque ? 600 : 500, color: cor || C.ink }}>
+          {texto}
+        </span>
+      </span>
+      <span aria-hidden="true" style={{ color: C.soft, fontSize: '13px' }}>›</span>
+    </button>
+  );
+
+  const iconeHoje = (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 3" />
+    </svg>
+  );
+  const iconeCalendario = (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+  const iconeContas = (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+      <line x1="4" y1="18" x2="14" y2="18" />
+    </svg>
+  );
+  const iconeMembros = (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+  const iconeSair = (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+
+  return (
+    <>
+      <div onClick={onFechar} style={{ position: 'fixed', inset: 0, background: 'rgba(18,33,28,.35)', zIndex: 40 }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        zIndex: 41, width: 'min(340px, 90vw)', background: '#fff', borderRadius: '16px',
+        padding: '10px', boxShadow: '0 20px 50px rgba(18,33,28,.25)',
+      }}>
+        <Linha onClick={() => onIrPara('hoje')} icone={iconeHoje} texto="Hoje" destaque={abaAtual === 'hoje'} />
+        <Linha onClick={() => onIrPara('calendario')} icone={iconeCalendario} texto="Calendário" destaque={abaAtual === 'calendario'} />
+        <Linha onClick={() => onIrPara('contas')} icone={iconeContas} texto="Contas" destaque={abaAtual === 'contas'} />
+
+        <div style={{ height: '1px', background: T.rule, margin: '6px 8px' }} />
+
+        <Linha onClick={onAbrirFamilia} icone={iconeMembros} texto="Membros da família" />
+        <Linha onClick={onSair} icone={iconeSair} texto="Sair" cor={C.rose} />
       </div>
     </>
   );
