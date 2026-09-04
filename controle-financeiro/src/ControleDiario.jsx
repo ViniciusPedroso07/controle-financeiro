@@ -1487,6 +1487,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   <TabelaItens
                     itens={d.rendas}
                     exemploNome="ex: Salário"
+                    formatar={V}
                     mes={absVisto}
                     onNome={(id, v) => setPadrao('rendas', id, 'nome', v)}
                     onDia={(id, v) => setPadrao('rendas', id, 'dia', v)}
@@ -1503,6 +1504,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   <TabelaItens
                     itens={d.fixos}
                     exemploNome="ex: Aluguel"
+                    formatar={V}
                     mes={absVisto}
                     onNome={(id, v) => setPadrao('fixos', id, 'nome', v)}
                     onDia={(id, v) => setPadrao('fixos', id, 'dia', v)}
@@ -1523,6 +1525,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   <TabelaItens
                     itens={d.contasVariaveis}
                     exemploNome="ex: Rodízio japonês"
+                    formatar={V}
                     comCategoria
                     categorias={categoriasUsadas}
                     mes={absVisto}
@@ -1546,6 +1549,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   <TabelaItens
                     itens={d.parcelas || []}
                     exemploNome="ex: Geladeira"
+                    formatar={V}
                     comParcelas
                     mes={absVisto}
                     ano={anoVisto}
@@ -1706,15 +1710,59 @@ function Total({ label, valor, cor }) {
   );
 }
 
-function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias = [], mes = 0, ano, onNome, onDia, onValor, onCategoria, onQuantidade, onMesInicio, onDel, onReordenar, onHerdar }) {
+function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias = [], mes = 0, ano, formatar = brl, onNome, onDia, onValor, onCategoria, onQuantidade, onMesInicio, onDel, onReordenar, onHerdar }) {
   const [arrasto, setArrasto] = useState(null); // { idx, deltaY, alvo, altura }
   const refsLinhas = useRef([]);
   const medidas = useRef([]);
 
+  const arrastoRef = useRef(null);
+
+  // O fim do arrasto é ouvido na janela inteira, não só na alça. No iPhone o
+  // gesto pode ser interrompido pelo sistema sem disparar o evento no botão —
+  // e, sem esta rede de segurança, o arrasto ficava preso e travava a rolagem.
+  useEffect(() => {
+    if (!arrasto) return;
+
+    const aoMover = (e) => {
+      const atual = arrastoRef.current;
+      if (!atual) return;
+      const deltaY = e.clientY - atual.y0;
+      const centroAtual = (medidas.current[atual.idx]?.centro || 0) + deltaY;
+
+      let alvo = atual.idx;
+      medidas.current.forEach((m, i) => {
+        if (i === atual.idx) return;
+        if (i < atual.idx && centroAtual < m.centro) alvo = Math.min(alvo, i);
+        if (i > atual.idx && centroAtual > m.centro) alvo = Math.max(alvo, i);
+      });
+
+      setArrasto((p) => (p ? { ...p, deltaY, alvo } : p));
+    };
+
+    const aoSoltar = () => {
+      const atual = arrastoRef.current;
+      if (atual && atual.alvo !== atual.idx) onReordenar?.(atual.idx, atual.alvo);
+      setArrasto(null);
+    };
+
+    window.addEventListener('pointermove', aoMover, { passive: true });
+    window.addEventListener('pointerup', aoSoltar);
+    window.addEventListener('pointercancel', aoSoltar);
+    window.addEventListener('blur', aoSoltar);
+
+    return () => {
+      window.removeEventListener('pointermove', aoMover);
+      window.removeEventListener('pointerup', aoSoltar);
+      window.removeEventListener('pointercancel', aoSoltar);
+      window.removeEventListener('blur', aoSoltar);
+    };
+  }, [arrasto?.idx]);
+
+  useEffect(() => { arrastoRef.current = arrasto; }, [arrasto]);
+
   const iniciarArrasto = (idx, e) => {
     if (itens.length < 2) return;
     e.preventDefault();
-    e.currentTarget.setPointerCapture?.(e.pointerId);
 
     medidas.current = refsLinhas.current.map((el) => {
       if (!el) return { topo: 0, altura: 0, centro: 0 };
@@ -1723,27 +1771,6 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
     });
 
     setArrasto({ idx, y0: e.clientY, deltaY: 0, alvo: idx, altura: medidas.current[idx]?.altura || 0 });
-  };
-
-  const moverArrasto = (e) => {
-    if (!arrasto) return;
-    const deltaY = e.clientY - arrasto.y0;
-    const centroAtual = (medidas.current[arrasto.idx]?.centro || 0) + deltaY;
-
-    let alvo = arrasto.idx;
-    medidas.current.forEach((m, i) => {
-      if (i === arrasto.idx) return;
-      if (i < arrasto.idx && centroAtual < m.centro) alvo = Math.min(alvo, i);
-      if (i > arrasto.idx && centroAtual > m.centro) alvo = Math.max(alvo, i);
-    });
-
-    setArrasto((p) => (p ? { ...p, deltaY, alvo } : p));
-  };
-
-  const soltarArrasto = () => {
-    if (!arrasto) return;
-    if (arrasto.alvo !== arrasto.idx) onReordenar?.(arrasto.idx, arrasto.alvo);
-    setArrasto(null);
   };
 
   const deslocamento = (i) => {
@@ -1777,15 +1804,12 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
               background: arrastando ? 'rgba(255,255,255,.75)' : 'transparent',
               borderRadius: arrastando ? '10px' : 0,
               boxShadow: arrastando ? '0 6px 18px rgba(18,33,28,.16)' : 'none',
-              touchAction: arrasto ? 'none' : 'auto',
+              touchAction: arrastando ? 'none' : 'auto',
             }}
           >
             {/* alça de arrastar */}
             <button
               onPointerDown={(e) => iniciarArrasto(i, e)}
-              onPointerMove={moverArrasto}
-              onPointerUp={soltarArrasto}
-              onPointerCancel={soltarArrasto}
               aria-label={`Arrastar ${item.nome || 'item'} para reordenar`}
               title="Arraste para reordenar"
               style={{
@@ -1813,7 +1837,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
             <div style={{ flex: '1 1 auto', minWidth: 0 }}>
               <input
                 type="text"
-                value={item.nome}
+                value={item.nome ?? ''}
                 onChange={(e) => onNome(item.id, e.target.value)}
                 placeholder={exemploNome}
                 style={{
@@ -1833,7 +1857,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
                   Dia
                 </span>
                 <select
-                  value={item.dia}
+                  value={item.dia ?? 10}
                   onChange={(e) => onDia(item.id, e.target.value)}
                   style={{
                     border: '1px solid rgba(18,33,28,.16)', background: '#fff', borderRadius: '8px',
@@ -1859,7 +1883,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
                     inputMode="decimal"
                     placeholder="0,00"
                     aria-label={comParcelas ? 'Valor da parcela' : 'Valor'}
-                    value={comParcelas ? item.valor : valorNoMes(item, mes)}
+                    value={(comParcelas ? item.valor : valorNoMes(item, mes)) ?? ''}
                     onChange={(e) => onValor(item.id, e.target.value)}
                     style={{
                       flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
@@ -1931,7 +1955,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
                         Parcelas
                       </span>
                       <select
-                        value={item.quantidade || 12}
+                        value={item.quantidade ?? 12}
                         onChange={(e) => onQuantidade?.(item.id, Number(e.target.value))}
                         aria-label="Quantidade de parcelas"
                         style={{
@@ -1964,7 +1988,7 @@ function TabelaItens({ itens, exemploNome, comCategoria, comParcelas, categorias
 
                     {num(item.valor) > 0 && qtd > 0 && (
                       <div style={{ fontSize: '10.5px', color: C.soft, marginTop: '6px', lineHeight: 1.6 }}>
-                        {qtd}x de {V(num(item.valor))} = <strong style={{ color: C.clay }}>{V(num(item.valor) * qtd)}</strong>
+                        {qtd}x de {formatar(num(item.valor))} = <strong style={{ color: C.clay }}>{formatar(num(item.valor) * qtd)}</strong>
                         {' · '}
                         {ativa
                           ? `${numAtual}ª parcela`
