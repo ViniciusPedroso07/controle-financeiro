@@ -49,6 +49,7 @@ const PADRAO = {
   fixos: FIXOS_INICIAIS,
   contasVariaveis: VARIAVEIS_INICIAIS,
   parcelas: PARCELAS_INICIAIS,
+  pagos: {},
   dias: {},
 };
 
@@ -170,6 +171,8 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
   const [mostrarFamilia, setMostrarFamilia] = useState(false);
   const [mostrarMenu, setMostrarMenu] = useState(false);
   const [editandoNome, setEditandoNome] = useState(false);
+  const [menuLembrete, setMenuLembrete] = useState(null);
+  const [mostrarExplicacao, setMostrarExplicacao] = useState(false);
   const [nome, setNome] = useState(() => {
     if (typeof window === 'undefined') return '';
     return window.localStorage?.getItem('vistta:nome') || '';
@@ -392,6 +395,26 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
           }
         });
 
+        // contas fixas e parcelas também são saída, então entram no ranking
+        d.fixos.forEach((x) => {
+          if (Number(x.dia) === dia) {
+            const val = num(valorNoMes(x, abs));
+            if (val > 0) {
+              const c = (x.nome && x.nome.trim()) || 'Conta fixa';
+              cats[c] = (cats[c] || 0) + val;
+            }
+          }
+        });
+        ativasNoMes.forEach((x) => {
+          if (Number(x.dia) === dia) {
+            const val = num(x.valor);
+            if (val > 0) {
+              const c = (x.nome && x.nome.trim()) || 'Parcela';
+              cats[c] = (cats[c] || 0) + val;
+            }
+          }
+        });
+
         saldo = saldo + ent + entradaAvulsa - fix - par - varPlanejada - avulso;
         saldos[k] = saldo;
 
@@ -449,6 +472,38 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
   const gastoDeHoje = ehMesCorrente ? (r.gastoPorDia?.[hoje.getDate()] || 0) : 0;
   // Saldo acumulado até hoje — o equivalente ao "saldo em conta" de um banco.
   const saldoAtual = ehMesCorrente ? (calc.saldos[hojeChave] ?? r.fim) : r.fim;
+
+  // Lembretes: contas que vencem em até 3 dias, vencem hoje, ou já passaram
+  // sem ninguém marcar como paga. Só no mês corrente — em outro mês não faz
+  // sentido cobrar pagamento.
+  const lembretes = useMemo(() => {
+    if (!ehMesCorrente) return [];
+    const diaHoje = hoje.getDate();
+    const lista = [];
+
+    const considerar = (item, valor, tipo) => {
+      if (valor <= 0) return;
+      const chave = `${absVisto}:${item.id}`;
+      if (d.pagos?.[chave]) return;
+      const dia = Number(item.dia);
+      const faltam = dia - diaHoje;
+      if (faltam > 3) return;
+      lista.push({
+        chave, nome: item.nome || 'Conta', valor, dia, faltam, tipo,
+        atrasada: faltam < 0,
+        ehHoje: faltam === 0,
+      });
+    };
+
+    d.fixos.forEach((f) => considerar(f, num(valorNoMes(f, absVisto)), 'fixa'));
+    parcelasDoMes(d.parcelas, absVisto).forEach((x) => considerar(x, num(x.valor), 'parcela'));
+    d.contasVariaveis.forEach((x) => considerar(x, num(valorNoMes(x, absVisto)), 'variavel'));
+
+    return lista.sort((a, b) => a.dia - b.dia);
+  }, [d, absVisto, ehMesCorrente]);
+
+  const marcarPaga = (chave) =>
+    setD((p) => ({ ...p, pagos: { ...(p.pagos || {}), [chave]: true } }));
   const sobrouHoje = podeHoje - gastoDeHoje;
   const mediaGasta = totalDias > 0 ? r.variaveis / totalDias : 0;
   const noRitmo = mediaGasta <= r.baseDia;
@@ -586,125 +641,6 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
     );
   }
 
-  const Caixa = ({ lab, val, cor }) => (
-    <div style={{ border: `1px solid ${T.rule}`, background: T.card, borderRadius: '11px', padding: '12px 13px' }}>
-      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px', letterSpacing: '0.12em', textTransform: 'uppercase', color: C.soft }}>
-        {lab}
-      </div>
-      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums', fontSize: '16px', fontWeight: 600, marginTop: '5px', color: cor }}>
-        {val}
-      </div>
-    </div>
-  );
-
-  // Navegação de tempo (ano + meses). Fica em posições diferentes conforme a
-  // aba: no Hoje vem depois dos atalhos; nas outras, logo no topo.
-  const NavegacaoTempo = () => (
-    <>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
-          {anosDisponiveis.map((a) => {
-            const ativo = a === anoVisto;
-            const ehAtual = a === anoAtual;
-            const corAtiva = ehAtual ? C.ink : C.azul;
-            return (
-              <button key={a} onClick={() => setAnoVisto(a)} aria-pressed={ativo} style={{
-                border: `1px solid ${ativo ? corAtiva : T.rule}`,
-                background: ativo ? corAtiva : 'transparent',
-                color: ativo ? '#fff' : ehAtual ? C.ink : C.azulMedio,
-                borderRadius: '20px', padding: '6px 14px', cursor: 'pointer',
-                fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                fontSize: '12.5px', fontWeight: 600, letterSpacing: '0.04em',
-              }}>
-                {a}
-              </button>
-            );
-          })}
-          {!ehMesCorrente && (
-            <button onClick={irParaHoje} style={{
-              border: 0, background: 'transparent', color: T.forte, cursor: 'pointer',
-              fontSize: '12px', fontWeight: 600, textDecoration: 'underline', padding: '6px 2px',
-            }}>
-              ir para hoje
-            </button>
-          )}
-        </div>
-
-        {outroAno && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '10px',
-            border: `1px solid ${C.azulPale}`, borderLeft: `4px solid ${C.azul}`,
-            background: C.azulBg, borderRadius: '10px', padding: '10px 13px', marginBottom: '14px',
-          }}>
-            <span aria-hidden="true" style={{ fontSize: '14px', lineHeight: 1, color: C.azul }}>
-              {anoVisto > anoAtual ? '↗' : '↩'}
-            </span>
-            <div style={{ fontSize: '12.5px', color: C.azul, lineHeight: 1.5 }}>
-              Você está em <strong>{anoVisto}</strong>. O saldo vem acumulado de {anoVisto - 1} e as contas
-              repetem o último valor informado.
-            </div>
-          </div>
-        )}
-
-        <div style={{ marginBottom: '22px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px', letterSpacing: '0.12em',
-              textTransform: 'uppercase', color: outroAno ? C.azulMedio : C.soft,
-            }}>
-              Meses de {anoVisto}
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: C.soft }}>
-              arraste
-              <span aria-hidden="true" style={{ fontSize: '13px', lineHeight: 1 }}>↔</span>
-            </span>
-          </div>
-
-          <div style={{ position: 'relative' }}>
-            <div ref={trilhaRef} style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '6px', paddingRight: '26px' }}>
-              {MESES.map((m, i) => {
-                const abs = absMes(anoVisto, i);
-                const info = calc.porMes[abs];
-                const v = info ? info.fim : 0;
-                const on = i === mes;
-                const desativado = abs < mesInicialAbs;
-                const corAtiva = outroAno ? C.azul : C.ink;
-                return (
-                  <button key={m} ref={on ? mesAtivoRef : null} onClick={() => setMes(i)} style={{
-                    flex: '1 0 auto', minWidth: '66px',
-                    border: `1px solid ${on ? corAtiva : T.rule}`,
-                    background: on ? corAtiva : 'transparent',
-                    borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
-                    opacity: desativado && !on ? 0.45 : 1,
-                  }}>
-                    <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', letterSpacing: '0.1em',
-                      textTransform: 'uppercase',
-                      color: on ? 'rgba(255,255,255,.7)' : outroAno ? C.azulMedio : C.soft,
-                    }}>
-                      {ABREV[i]}
-                    </div>
-                    <div style={{
-                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                      fontSize: '13px', fontWeight: 600, marginTop: '3px',
-                      color: on ? (v < 0 ? '#F0A9A3' : outroAno ? '#A8CBE8' : '#8FD9BE') : v < 0 ? C.rose : T.forte,
-                    }}>
-                      {Vc(v)}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <div aria-hidden="true" style={{
-              position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
-              background: `linear-gradient(to right, rgba(255,255,255,0), ${T.paper})`,
-              pointerEvents: 'none',
-            }} />
-          </div>
-        </div>
-
-    </>
-  );
-
   // Ícone circular contornado, no padrão dos apps de banco
   const IconeFaixa = ({ onClick, rotulo, children }) => (
     <button
@@ -808,6 +744,24 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
                 </svg>
               </button>
+
+              {lembretes.length > 0 && (
+                <div style={{
+                  display: 'flex', gap: '10px', overflowX: 'auto',
+                  marginTop: '18px', paddingBottom: '4px',
+                }}>
+                  {lembretes.map((L) => (
+                    <CardLembrete
+                      key={L.chave}
+                      lembrete={L}
+                      valorFormatado={V(L.valor)}
+                      menuAberto={menuLembrete === L.chave}
+                      onAbrirMenu={() => setMenuLembrete(menuLembrete === L.chave ? null : L.chave)}
+                      onMarcarPaga={() => { marcarPaga(L.chave); setMenuLembrete(null); }}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -914,6 +868,27 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
             onAbrirFamilia={() => { setMostrarMenu(false); setMostrarFamilia(true); }}
             onSair={onSair}
             onFechar={() => setMostrarMenu(false)}
+          />
+        )}
+
+        {mostrarExplicacao && (
+          <ExplicacaoLimite
+            ehMesCorrente={ehMesCorrente}
+            ganhos={r.ganhos}
+            fixos={r.fixos}
+            parcelas={r.parcelas}
+            variaveis={r.variaveis}
+            sobra={r.sobra}
+            diasRestantes={diasRestantes}
+            totalDias={totalDias}
+            podeHoje={podeHoje}
+            baseDia={r.baseDia}
+            gastoDeHoje={gastoDeHoje}
+            sobrouHoje={sobrouHoje}
+            formatar={V}
+            mes={MESES[mes].toLowerCase()}
+            tema={T}
+            onFechar={() => setMostrarExplicacao(false)}
           />
         )}
 
@@ -1062,8 +1037,24 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                     display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
                     gap: '10px', flexWrap: 'wrap',
                   }}>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: C.ink }}>
-                      {ehMesCorrente ? 'Posso gastar hoje' : `Média por dia em ${MESES[mes].toLowerCase()}`}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: C.ink }}>
+                        {ehMesCorrente ? 'Posso gastar hoje' : `Média por dia em ${MESES[mes].toLowerCase()}`}
+                      </span>
+                      <button
+                        onClick={() => setMostrarExplicacao(true)}
+                        aria-label="Como este valor é calculado"
+                        style={{
+                          border: 0, background: 'transparent', padding: 0, cursor: 'pointer',
+                          color: C.soft, display: 'flex', alignItems: 'center', lineHeight: 0,
+                        }}
+                      >
+                        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M12 16v-4" />
+                          <path d="M12 8h.01" />
+                        </svg>
+                      </button>
                     </span>
                     <span style={{
                       fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
@@ -1085,15 +1076,60 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   </div>
                 </div>
 
-                {/* ── resumo do mês ── */}
-                <div style={{ fontSize: '14px', fontWeight: 600, color: C.ink, marginBottom: '10px' }}>
-                  Resumo de {MESES[mes].toLowerCase()}
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: ehMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: '10px', marginBottom: '22px' }}>
-                  <Caixa lab={`Fim de ${ABREV[mes]}`} val={V(r.fim)} cor={r.fim < 0 ? C.rose : T.forte} />
-                  <Caixa lab="Sobra do mês" val={V(r.sobra)} cor={r.sobra < 0 ? C.rose : T.forte} />
-                  <Caixa lab="Já gasto no mês" val={V(r.variaveis)} cor={C.vinho} />
-                  <Caixa lab="Comprometido" val={V(r.fixos + r.parcelas)} cor={C.steel} />
+                {/* ── como o mês se divide: entrou, saiu previsto, saiu a mais ── */}
+                <div style={{
+                  border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
+                  padding: ehMobile ? '15px' : '17px 19px', marginBottom: '18px',
+                }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                    gap: '10px', marginBottom: '14px', flexWrap: 'wrap',
+                  }}>
+                    <span style={{ fontSize: '14px', fontWeight: 600, color: C.ink }}>
+                      Resumo de {MESES[mes].toLowerCase()}
+                    </span>
+                    <span style={{ fontSize: '11.5px', color: C.soft }}>
+                      abertura {V(r.abertura)}
+                    </span>
+                  </div>
+
+                  <BarrasDoMes
+                    entrou={r.ganhos}
+                    previsto={r.fixos + r.parcelas + (r.variaveisPlanejadas ?? 0)}
+                    aMais={Math.max(0, r.variaveis - (r.variaveisPlanejadas ?? 0))}
+                    formatar={V}
+                    tema={T}
+                  />
+
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                    gap: '10px', marginTop: '15px', paddingTop: '13px',
+                    borderTop: `1px solid ${T.rule}`,
+                  }}>
+                    <span style={{ fontSize: '12.5px', color: C.soft }}>
+                      Sobra do mês
+                    </span>
+                    <span style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '15px', fontWeight: 600, color: r.sobra < 0 ? C.rose : T.forte,
+                    }}>
+                      {V(r.sobra)}
+                    </span>
+                  </div>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                    gap: '10px', marginTop: '7px',
+                  }}>
+                    <span style={{ fontSize: '12.5px', color: C.soft }}>
+                      Saldo no fim de {ABREV[mes]}
+                    </span>
+                    <span style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '15px', fontWeight: 600, color: r.fim < 0 ? C.rose : C.ink,
+                    }}>
+                      {V(r.fim)}
+                    </span>
+                  </div>
                 </div>
 
                 {/* ranking */}
@@ -1102,8 +1138,8 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   padding: ehMobile ? '14px' : '16px 18px', marginBottom: '18px',
                 }}>
                   <CabecalhoSecao
-                    titulo={`Para onde foi em ${MESES[mes].toLowerCase()}`}
-                    subtitulo="Contas variáveis e gastos avulsos, por categoria."
+                    titulo={`Principais gastos de ${MESES[mes].toLowerCase()}`}
+                    subtitulo="Todas as saídas do mês: fixas, parcelas, variáveis e avulsos."
                     aberta={secoes.ranking}
                     onToggle={() => alternar('ranking')}
                     cor={T.forte}
@@ -1158,48 +1194,6 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
                   )}
                 </div>
 
-                {/* fechamento de cada mês */}
-                <div style={{
-                  border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px',
-                  padding: ehMobile ? '14px' : '16px 18px',
-                }}>
-                  <CabecalhoSecao
-                    titulo={`Fechamento de cada mês de ${anoVisto}`}
-                    subtitulo="Saldo no último dia."
-                    aberta={secoes.fechamento}
-                    onToggle={() => alternar('fechamento')}
-                    cor={T.forte}
-                  />
-                  {secoes.fechamento && <div style={{ height: '12px' }} />}
-                  {secoes.fechamento && MESES.map((m, i) => {
-                    const absI = absMes(anoVisto, i);
-                    const x = calc.porMes[absI] || { fim: 0 };
-                    const doAno = MESES.map((_, j) => calc.porMes[absMes(anoVisto, j)]?.fim || 0);
-                    const maxAno = Math.max(1, ...doAno.map((y) => Math.abs(y)));
-                    return (
-                      <div key={m} onClick={() => setMes(i)} style={{
-                        display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px', alignItems: 'center',
-                        padding: '7px 0', borderBottom: '1px solid #E4E8E0', cursor: 'pointer',
-                        opacity: absI < mesInicialAbs ? 0.5 : 1,
-                      }}>
-                        <div>
-                          <div style={{ fontSize: '13px', fontWeight: i === mes ? 600 : 400 }}>{m}</div>
-                          <div style={{
-                            height: '5px', borderRadius: '3px',
-                            background: x.fim < 0 ? C.rose : T.medio, marginTop: '5px',
-                            width: `${Math.max(3, (Math.abs(x.fim) / maxAno) * 100)}%`,
-                          }} />
-                        </div>
-                        <div style={{
-                          fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                          fontSize: '13px', fontWeight: 600, color: x.fim < 0 ? C.rose : C.ink,
-                        }}>
-                          {V(x.fim)}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
               </>
             )}
           </>
@@ -2404,6 +2398,257 @@ function EditarNome({ valorInicial, onSalvar, onFechar, tema }) {
           </button>
         </div>
       </form>
+    </>
+  );
+}
+
+// Card de lembrete de conta, no padrão dos apps de banco: some quando a
+// pessoa marca como paga pelos três pontinhos. Vencida fica em bordô.
+function CardLembrete({ lembrete, valorFormatado, menuAberto, onAbrirMenu, onMarcarPaga }) {
+  const { nome, dia, faltam, atrasada, ehHoje } = lembrete;
+
+  const quando = atrasada
+    ? (faltam === -1 ? 'venceu ontem' : `venceu há ${Math.abs(faltam)} dias`)
+    : ehHoje
+      ? 'vence hoje'
+      : faltam === 1 ? 'vence amanhã' : `vence em ${faltam} dias`;
+
+  const fundo = atrasada ? C.vinho : '#fff';
+  const corTexto = atrasada ? '#fff' : C.ink;
+  const corSuave = atrasada ? 'rgba(255,255,255,.78)' : C.soft;
+
+  return (
+    <div style={{
+      flex: 'none', width: '205px', position: 'relative',
+      background: fundo, borderRadius: '13px', padding: '13px 14px',
+      boxShadow: atrasada ? '0 6px 18px rgba(122,46,62,.3)' : '0 4px 14px rgba(18,33,28,.12)',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+        <span style={{
+          fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+          letterSpacing: '0.1em', textTransform: 'uppercase', color: corSuave,
+        }}>
+          {atrasada ? 'Conta vencida' : 'Lembrete de conta'}
+        </span>
+
+        <button
+          onClick={onAbrirMenu}
+          aria-label="Opções do lembrete"
+          style={{
+            border: 0, background: 'transparent', color: corSuave, cursor: 'pointer',
+            padding: 0, lineHeight: 1, fontSize: '15px', flex: 'none', marginTop: '-2px',
+          }}
+        >
+          ⋮
+        </button>
+      </div>
+
+      <div style={{
+        fontSize: '13.5px', fontWeight: 600, color: corTexto, marginTop: '7px',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {nome}
+      </div>
+
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        gap: '8px', marginTop: '4px',
+      }}>
+        <span style={{ fontSize: '11.5px', color: corSuave }}>
+          dia {dia} · {quando}
+        </span>
+        <span style={{
+          fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+          fontSize: '13px', fontWeight: 600, color: corTexto,
+        }}>
+          {valorFormatado}
+        </span>
+      </div>
+
+      {menuAberto && (
+        <>
+          <div onClick={onAbrirMenu} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
+          <div style={{
+            position: 'absolute', top: '34px', right: '10px', zIndex: 31,
+            background: '#fff', borderRadius: '10px', padding: '4px',
+            boxShadow: '0 10px 26px rgba(18,33,28,.24)', minWidth: '164px',
+          }}>
+            <button
+              onClick={onMarcarPaga}
+              style={{
+                width: '100%', border: 0, background: 'transparent', cursor: 'pointer',
+                borderRadius: '7px', padding: '10px 12px', textAlign: 'left',
+                fontSize: '13px', color: C.ink, display: 'flex', alignItems: 'center', gap: '8px',
+              }}
+            >
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.deep} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              Marcar como paga
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Barras deitadas do mês: quanto entrou, quanto era previsto sair e quanto
+// saiu além do previsto. Escala compartilhada, para as barras serem
+// comparáveis entre si de bater o olho.
+function BarrasDoMes({ entrou, previsto, aMais, formatar, tema }) {
+  const T = tema || { forte: C.deep, rule: C.rule };
+  const maximo = Math.max(entrou, previsto + aMais, 1);
+
+  const linhas = [
+    { rotulo: 'Entrou', valor: entrou, cor: T.forte, ajuda: 'salários e entradas avulsas' },
+    { rotulo: 'Saiu previsto', valor: previsto, cor: C.steel, ajuda: 'fixas, parcelas e variáveis planejadas' },
+    { rotulo: 'Saiu a mais', valor: aMais, cor: C.vinho, ajuda: 'gastos avulsos lançados no calendário' },
+  ];
+
+  return (
+    <div style={{ display: 'grid', gap: '13px' }}>
+      {linhas.map((l) => (
+        <div key={l.rotulo}>
+          <div style={{
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+            gap: '10px', marginBottom: '5px',
+          }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '7px', minWidth: 0 }}>
+              <span aria-hidden="true" style={{
+                width: '9px', height: '9px', borderRadius: '2.5px', background: l.cor, flex: 'none',
+              }} />
+              <span style={{ fontSize: '12.5px', color: C.ink }}>{l.rotulo}</span>
+            </span>
+            <span style={{
+              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+              fontSize: '13px', fontWeight: 600, color: C.ink, flex: 'none',
+            }}>
+              {formatar(l.valor)}
+            </span>
+          </div>
+
+          <div style={{ height: '9px', borderRadius: '5px', background: 'rgba(18,33,28,.07)', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', borderRadius: '5px', background: l.cor,
+              width: `${Math.max(l.valor > 0 ? 3 : 0, (l.valor / maximo) * 100)}%`,
+              transition: 'width .3s ease',
+            }} />
+          </div>
+
+          <div style={{ fontSize: '10.5px', color: C.soft, marginTop: '4px' }}>
+            {l.ajuda}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Explica de onde vem o "posso gastar hoje", passo a passo, com os números
+// reais do mês — para o valor não parecer arbitrário.
+function ExplicacaoLimite({
+  ehMesCorrente, ganhos, fixos, parcelas, variaveis, sobra,
+  diasRestantes, totalDias, podeHoje, baseDia, gastoDeHoje, sobrouHoje,
+  formatar, mes, tema, onFechar,
+}) {
+  const T = tema || { forte: C.deep, rule: C.rule };
+
+  const Linha = ({ rotulo, valor, sinal, forte }) => (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      gap: '10px', padding: '7px 0',
+      borderTop: forte ? `1px solid ${T.rule}` : 0,
+      marginTop: forte ? '4px' : 0,
+    }}>
+      <span style={{ fontSize: '13px', color: forte ? C.ink : C.soft, fontWeight: forte ? 600 : 400 }}>
+        {sinal && <span style={{ marginRight: '5px', color: C.soft }}>{sinal}</span>}
+        {rotulo}
+      </span>
+      <span style={{
+        fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+        fontSize: '13px', fontWeight: 600, color: C.ink, flex: 'none',
+      }}>
+        {valor}
+      </span>
+    </div>
+  );
+
+  return (
+    <>
+      <div onClick={onFechar} style={{ position: 'fixed', inset: 0, background: 'rgba(18,33,28,.35)', zIndex: 40 }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        zIndex: 41, width: 'min(400px, 92vw)', maxHeight: '82vh', overflowY: 'auto',
+        background: '#fff', borderRadius: '16px', padding: '22px',
+        boxShadow: '0 20px 50px rgba(18,33,28,.25)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+          <h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '17px', margin: 0 }}>
+            De onde vem esse valor
+          </h2>
+          <button onClick={onFechar} aria-label="Fechar" style={{
+            border: 0, background: 'transparent', fontSize: '20px', color: C.soft, cursor: 'pointer', lineHeight: 1,
+          }}>
+            ×
+          </button>
+        </div>
+
+        {ehMesCorrente ? (
+          <>
+            <p style={{ fontSize: '12.5px', color: C.soft, margin: '0 0 14px', lineHeight: 1.6 }}>
+              É o que ainda sobra do mês dividido pelos dias que faltam. Por isso ele muda todo dia:
+              se você gasta menos, ele sobe; se gasta mais, ele cai.
+            </p>
+
+            <Linha rotulo="Tudo que entra no mês" valor={formatar(ganhos)} />
+            <Linha rotulo="Contas fixas" valor={formatar(fixos)} sinal="−" />
+            {parcelas > 0 && <Linha rotulo="Parcelas" valor={formatar(parcelas)} sinal="−" />}
+            <Linha rotulo="Já gasto no mês" valor={formatar(variaveis)} sinal="−" />
+            <Linha rotulo="Sobra do mês" valor={formatar(sobra)} forte />
+
+            <div style={{
+              background: T.baseBg || '#E7F0E9', borderRadius: '10px',
+              padding: '13px 14px', marginTop: '14px',
+            }}>
+              <div style={{ fontSize: '12.5px', color: C.ink, lineHeight: 1.6 }}>
+                {formatar(sobra)} ÷ {diasRestantes} {diasRestantes === 1 ? 'dia restante' : 'dias restantes'} ={' '}
+                <strong>{formatar(podeHoje)}</strong> por dia
+              </div>
+              {gastoDeHoje > 0 && (
+                <div style={{ fontSize: '12.5px', color: C.ink, lineHeight: 1.6, marginTop: '6px' }}>
+                  Você já gastou {formatar(gastoDeHoje)} hoje, então ainda restam{' '}
+                  <strong>{formatar(sobrouHoje)}</strong>.
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={{ fontSize: '12.5px', color: C.soft, margin: '0 0 14px', lineHeight: 1.6 }}>
+              Como {mes} não é o mês atual, aqui mostramos a média do mês inteiro — não faria sentido
+              falar em "hoje".
+            </p>
+
+            <Linha rotulo="Tudo que entra no mês" valor={formatar(ganhos)} />
+            <Linha rotulo="Contas fixas" valor={formatar(fixos)} sinal="−" />
+            {parcelas > 0 && <Linha rotulo="Parcelas" valor={formatar(parcelas)} sinal="−" />}
+
+            <div style={{
+              background: T.baseBg || '#E7F0E9', borderRadius: '10px',
+              padding: '13px 14px', marginTop: '14px',
+              fontSize: '12.5px', color: C.ink, lineHeight: 1.6,
+            }}>
+              Dividido por {totalDias} dias = <strong>{formatar(baseDia)}</strong> por dia
+            </div>
+          </>
+        )}
+
+        <p style={{ fontSize: '11.5px', color: C.soft, marginTop: '14px', lineHeight: 1.55 }}>
+          As contas variáveis planejadas já entram como gasto mesmo antes do dia chegar, então o número
+          é conservador de propósito.
+        </p>
+      </div>
     </>
   );
 }
