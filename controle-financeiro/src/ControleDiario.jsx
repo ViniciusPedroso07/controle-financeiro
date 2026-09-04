@@ -115,6 +115,8 @@ const migrarParaAbsoluto = (dados) => {
     fixos: converterLista(dados.fixos),
     contasVariaveis: converterLista(dados.contasVariaveis),
     parcelas,
+    pagos: dados.pagos || {},
+    dias: dados.dias || {},
   };
 };
 
@@ -234,7 +236,16 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
     const trilha = trilhaRef.current;
     const botao = mesAtivoRef.current;
     const alvo = botao.offsetLeft - (trilha.clientWidth / 2) + (botao.clientWidth / 2);
-    trilha.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
+    // nem todo navegador aceita scrollTo com opções; se falhar, cai no simples
+    try {
+      if (typeof trilha.scrollTo === 'function') {
+        trilha.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
+      } else {
+        trilha.scrollLeft = Math.max(0, alvo);
+      }
+    } catch {
+      trilha.scrollLeft = Math.max(0, alvo);
+    }
   }, [mes, anoVisto, carregando, ehMobile, aba]);
 
   useEffect(() => { setListaMeses(false); }, [mes, anoVisto, aba]);
@@ -356,9 +367,9 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
       const total = diasNoMes(ano, m);
 
       const abertura = saldo;
-      const ganhosTotal = d.rendas.reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0);
-      const fixosTotal = d.fixos.reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0);
-      const ativasNoMes = parcelasDoMes(d.parcelas, abs);
+      const ganhosTotal = (d.rendas || []).reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0);
+      const fixosTotal = (d.fixos || []).reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0);
+      const ativasNoMes = parcelasDoMes(d.parcelas || [], abs);
       const parcelasTotal = ativasNoMes.reduce((acc, x) => acc + num(x.valor), 0);
       const baseDia = total > 0 ? (ganhosTotal - fixosTotal - parcelasTotal) / total : 0;
 
@@ -379,12 +390,12 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
           if (l.tipo === 'entrada') entradaAvulsa += v; else avulso += v;
         });
 
-        const ent = d.rendas.reduce((acc, x) => (Number(x.dia) === dia ? acc + num(valorNoMes(x, abs)) : acc), 0);
-        const fix = d.fixos.reduce((acc, x) => (Number(x.dia) === dia ? acc + num(valorNoMes(x, abs)) : acc), 0);
+        const ent = (d.rendas || []).reduce((acc, x) => (Number(x.dia) === dia ? acc + num(valorNoMes(x, abs)) : acc), 0);
+        const fix = (d.fixos || []).reduce((acc, x) => (Number(x.dia) === dia ? acc + num(valorNoMes(x, abs)) : acc), 0);
         const par = ativasNoMes.reduce((acc, x) => (Number(x.dia) === dia ? acc + num(x.valor) : acc), 0);
 
         let varPlanejada = 0;
-        d.contasVariaveis.forEach((x) => {
+        (d.contasVariaveis || []).forEach((x) => {
           if (Number(x.dia) === dia) {
             const val = num(valorNoMes(x, abs));
             varPlanejada += val;
@@ -396,7 +407,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
         });
 
         // contas fixas e parcelas também são saída, então entram no ranking
-        d.fixos.forEach((x) => {
+        (d.fixos || []).forEach((x) => {
           if (Number(x.dia) === dia) {
             const val = num(valorNoMes(x, abs));
             if (val > 0) {
@@ -442,7 +453,7 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
         fim: saldo,
         cats,
         dias: total,
-        variaveisPlanejadas: d.contasVariaveis.reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0),
+        variaveisPlanejadas: (d.contasVariaveis || []).reduce((acc, x) => acc + num(valorNoMes(x, abs)), 0),
       };
     }
     return { saldos, porMes };
@@ -495,9 +506,9 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
       });
     };
 
-    d.fixos.forEach((f) => considerar(f, num(valorNoMes(f, absVisto)), 'fixa'));
-    parcelasDoMes(d.parcelas, absVisto).forEach((x) => considerar(x, num(x.valor), 'parcela'));
-    d.contasVariaveis.forEach((x) => considerar(x, num(valorNoMes(x, absVisto)), 'variavel'));
+    (d.fixos || []).forEach((f) => considerar(f, num(valorNoMes(f, absVisto)), 'fixa'));
+    parcelasDoMes(d.parcelas || [], absVisto).forEach((x) => considerar(x, num(x.valor), 'parcela'));
+    (d.contasVariaveis || []).forEach((x) => considerar(x, num(valorNoMes(x, absVisto)), 'variavel'));
 
     return lista.sort((a, b) => a.dia - b.dia);
   }, [d, absVisto, ehMesCorrente]);
@@ -510,8 +521,8 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
 
   const categoriasUsadas = useMemo(() => {
     const usadas = new Set();
-    d.contasVariaveis.forEach((v) => { if (v.categoria && v.categoria.trim()) usadas.add(v.categoria.trim()); });
-    Object.values(d.dias).forEach((reg) => {
+    (d.contasVariaveis || []).forEach((v) => { if (v.categoria && v.categoria.trim()) usadas.add(v.categoria.trim()); });
+    Object.values(d.dias || {}).forEach((reg) => {
       (reg?.lancamentos || []).forEach((l) => { if (l.categoria && l.categoria.trim()) usadas.add(l.categoria.trim()); });
     });
     CAT_SUGESTOES.forEach((c) => usadas.add(c));
@@ -617,10 +628,10 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
       sem,
       fds: sem === 0 || sem === 6,
       ehHoje: k === hojeChave,
-      ents: antesDoInicio ? [] : d.rendas.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
-      fixs: antesDoInicio ? [] : d.fixos.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
-      vars: antesDoInicio ? [] : d.contasVariaveis.filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
-      pars: antesDoInicio ? [] : parcelasDoMes(d.parcelas, absVisto).filter((x) => Number(x.dia) === dia),
+      ents: antesDoInicio ? [] : (d.rendas || []).filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
+      fixs: antesDoInicio ? [] : (d.fixos || []).filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
+      vars: antesDoInicio ? [] : (d.contasVariaveis || []).filter((x) => Number(x.dia) === dia && num(valorNoMes(x, absVisto)) > 0),
+      pars: antesDoInicio ? [] : parcelasDoMes(d.parcelas || [], absVisto).filter((x) => Number(x.dia) === dia),
     };
   });
 
@@ -642,6 +653,113 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
   }
 
   // Ícone circular contornado, no padrão dos apps de banco
+  // Navegação de tempo (ano + trilha de meses). Fica em posições diferentes
+  // conforme a aba: no Hoje vem depois dos atalhos; nas outras, no topo.
+  const NavegacaoTempo = () => (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        {anosDisponiveis.map((a) => {
+          const ativo = a === anoVisto;
+          const ehAtual = a === anoAtual;
+          const corAtiva = ehAtual ? C.ink : C.azul;
+          return (
+            <button key={a} onClick={() => setAnoVisto(a)} aria-pressed={ativo} style={{
+              border: `1px solid ${ativo ? corAtiva : T.rule}`,
+              background: ativo ? corAtiva : 'transparent',
+              color: ativo ? '#fff' : ehAtual ? C.ink : C.azulMedio,
+              borderRadius: '20px', padding: '6px 14px', cursor: 'pointer',
+              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+              fontSize: '12.5px', fontWeight: 600, letterSpacing: '0.04em',
+            }}>
+              {a}
+            </button>
+          );
+        })}
+        {!ehMesCorrente && (
+          <button onClick={irParaHoje} style={{
+            border: 0, background: 'transparent', color: T.forte, cursor: 'pointer',
+            fontSize: '12px', fontWeight: 600, textDecoration: 'underline', padding: '6px 2px',
+          }}>
+            ir para hoje
+          </button>
+        )}
+      </div>
+
+      {outroAno && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          border: `1px solid ${C.azulPale}`, borderLeft: `4px solid ${C.azul}`,
+          background: C.azulBg, borderRadius: '10px', padding: '10px 13px', marginBottom: '14px',
+        }}>
+          <span aria-hidden="true" style={{ fontSize: '14px', lineHeight: 1, color: C.azul }}>
+            {anoVisto > anoAtual ? '↗' : '↩'}
+          </span>
+          <div style={{ fontSize: '12.5px', color: C.azul, lineHeight: 1.5 }}>
+            Você está em <strong>{anoVisto}</strong>. O saldo vem acumulado de {anoVisto - 1} e as contas
+            repetem o último valor informado.
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginBottom: '22px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+          <span style={{
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px', letterSpacing: '0.12em',
+            textTransform: 'uppercase', color: outroAno ? C.azulMedio : C.soft,
+          }}>
+            Meses de {anoVisto}
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: C.soft }}>
+            arraste
+            <span aria-hidden="true" style={{ fontSize: '13px', lineHeight: 1 }}>↔</span>
+          </span>
+        </div>
+
+        <div style={{ position: 'relative' }}>
+          <div ref={trilhaRef} style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '6px', paddingRight: '26px' }}>
+            {MESES.map((m, i) => {
+              const abs = absMes(anoVisto, i);
+              const info = calc.porMes[abs];
+              const v = info ? info.fim : 0;
+              const on = i === mes;
+              const desativado = abs < mesInicialAbs;
+              const corAtiva = outroAno ? C.azul : C.ink;
+              return (
+                <button key={m} ref={on ? mesAtivoRef : null} onClick={() => setMes(i)} style={{
+                  flex: '1 0 auto', minWidth: '66px',
+                  border: `1px solid ${on ? corAtiva : T.rule}`,
+                  background: on ? corAtiva : 'transparent',
+                  borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
+                  opacity: desativado && !on ? 0.45 : 1,
+                }}>
+                  <div style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    color: on ? 'rgba(255,255,255,.7)' : outroAno ? C.azulMedio : C.soft,
+                  }}>
+                    {ABREV[i]}
+                  </div>
+                  <div style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                    fontSize: '13px', fontWeight: 600, marginTop: '3px',
+                    color: on ? (v < 0 ? '#F0A9A3' : outroAno ? '#A8CBE8' : '#8FD9BE') : v < 0 ? C.rose : T.forte,
+                  }}>
+                    {Vc(v)}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div aria-hidden="true" style={{
+            position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
+            background: `linear-gradient(to right, rgba(255,255,255,0), ${T.paper})`,
+            pointerEvents: 'none',
+          }} />
+        </div>
+      </div>
+    </>
+  );
+
   const IconeFaixa = ({ onClick, rotulo, children }) => (
     <button
       onClick={onClick}
