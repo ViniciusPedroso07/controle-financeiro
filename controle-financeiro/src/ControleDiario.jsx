@@ -2396,6 +2396,7 @@ function PainelFamilia({ supabase, onFechar, onTrocarFamilia, tema }) {
   const [membros, setMembros] = useState(null);
   const [meuId, setMeuId] = useState(null);
   const [convite, setConvite] = useState(null);
+  const [convitesAtivos, setConvitesAtivos] = useState([]);
   const [codigoEntrada, setCodigoEntrada] = useState('');
   const [situacao, setSituacao] = useState(null);
   const [confirmandoTroca, setConfirmandoTroca] = useState(false);
@@ -2414,6 +2415,9 @@ function PainelFamilia({ supabase, onFechar, onTrocarFamilia, tema }) {
 
       const { data: sit } = await supabase.rpc('minha_situacao');
       setSituacao(Array.isArray(sit) ? sit[0] : sit);
+
+      const { data: convites } = await supabase.rpc('listar_convites');
+      setConvitesAtivos(convites || []);
     })();
   }, []);
 
@@ -2425,6 +2429,8 @@ function PainelFamilia({ supabase, onFechar, onTrocarFamilia, tema }) {
       const { data, error } = await supabase.rpc('create_invite');
       if (error) throw error;
       setConvite(data);
+      const { data: convites } = await supabase.rpc('listar_convites');
+      setConvitesAtivos(convites || []);
     } catch (err) {
       setErro(err.message || 'Não foi possível gerar o convite.');
     } finally {
@@ -2515,15 +2521,58 @@ function PainelFamilia({ supabase, onFechar, onTrocarFamilia, tema }) {
           </div>
         )}
 
-        {souDono ? (
+        {membros !== null ? (
           <div style={{ borderTop: `1px solid ${T.rule}`, paddingTop: '16px' }}>
             <div style={{ fontSize: '13.5px', fontWeight: 600, color: C.ink, marginBottom: '4px' }}>
               Convidar alguém
             </div>
             <p style={{ fontSize: '12px', color: C.soft, marginBottom: '12px', lineHeight: 1.5 }}>
-              Gere um código, envie para a pessoa (WhatsApp, por exemplo). Vale por 24 horas e só
-              funciona uma vez.
+              Gere um código e envie para a pessoa. Vale por 7 dias e funciona uma vez só.
             </p>
+
+            {convitesAtivos.length > 0 && !convite && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+                  letterSpacing: '0.1em', textTransform: 'uppercase', color: C.soft,
+                  marginBottom: '7px',
+                }}>
+                  Convites ainda válidos
+                </div>
+                {convitesAtivos.map((c) => (
+                  <div key={c.code} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '10px', border: `1px solid ${T.rule}`, borderRadius: '9px',
+                    padding: '9px 11px', marginBottom: '6px',
+                  }}>
+                    <span>
+                      <span style={{
+                        display: 'block',
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: '16px',
+                        fontWeight: 700, letterSpacing: '0.1em', color: T.forte,
+                      }}>
+                        {c.code}
+                      </span>
+                      <span style={{ display: 'block', fontSize: '10.5px', color: C.soft, marginTop: '2px' }}>
+                        {c.horas_restantes >= 24
+                          ? `vale por mais ${Math.floor(c.horas_restantes / 24)} ${Math.floor(c.horas_restantes / 24) === 1 ? 'dia' : 'dias'}`
+                          : `vale por mais ${Math.max(0, Math.round(c.horas_restantes))}h`}
+                      </span>
+                    </span>
+                    <button
+                      onClick={() => navigator.clipboard?.writeText(c.code)}
+                      style={{
+                        flex: 'none', border: `1px solid ${T.rule}`, background: 'transparent',
+                        color: C.ink, borderRadius: '8px', padding: '7px 12px',
+                        fontSize: '12px', cursor: 'pointer',
+                      }}
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {!convite ? (
               <button onClick={gerarConvite} disabled={gerando} style={{
@@ -2549,16 +2598,12 @@ function PainelFamilia({ supabase, onFechar, onTrocarFamilia, tema }) {
                   Copiar código
                 </button>
                 <p style={{ fontSize: '11px', color: C.soft, marginTop: '10px' }}>
-                  Válido por 24 horas, uso único.
+                  Válido por 7 dias, uso único.
                 </p>
               </div>
             )}
           </div>
-        ) : (
-          <p style={{ fontSize: '12px', color: C.soft, borderTop: `1px solid ${T.rule}`, paddingTop: '14px' }}>
-            Só o dono da família pode convidar ou remover pessoas.
-          </p>
-        )}
+        ) : null}
 
         {/* ── entrar em outra família com um código, sem deslogar ── */}
         <div style={{ borderTop: `1px solid ${T.rule}`, paddingTop: '16px', marginTop: '18px' }}>
