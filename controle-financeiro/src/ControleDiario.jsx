@@ -159,7 +159,7 @@ const ABAS = [
   { id: 'contas', rotulo: 'Contas', icone: '☰' },
 ];
 
-export default function ControleDiario({ familyId, supabase, onSair }) {
+export default function ControleDiario({ familyId, supabase, onSair, onTrocarFamilia }) {
   const hoje = new Date();
   const [d, setD] = useState(PADRAO);
   const [aba, setAba] = useState('hoje');
@@ -222,8 +222,6 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
   const Vc = (n) => (mostrarValores ? curto(n) : '••');
   const alternar = (chave) => setSecoes((p) => ({ ...p, [chave]: !p[chave] }));
   const syncRef = useRef(null);
-  const trilhaRef = useRef(null);
-  const mesAtivoRef = useRef(null);
 
   useEffect(() => {
     const aoRedimensionar = () => setEhMobile(window.innerWidth < 760);
@@ -231,22 +229,6 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
     return () => window.removeEventListener('resize', aoRedimensionar);
   }, []);
 
-  useEffect(() => {
-    if (!mesAtivoRef.current || !trilhaRef.current) return;
-    const trilha = trilhaRef.current;
-    const botao = mesAtivoRef.current;
-    const alvo = botao.offsetLeft - (trilha.clientWidth / 2) + (botao.clientWidth / 2);
-    // nem todo navegador aceita scrollTo com opções; se falhar, cai no simples
-    try {
-      if (typeof trilha.scrollTo === 'function') {
-        trilha.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
-      } else {
-        trilha.scrollLeft = Math.max(0, alvo);
-      }
-    } catch {
-      trilha.scrollLeft = Math.max(0, alvo);
-    }
-  }, [mes, anoVisto, carregando, ehMobile, aba]);
 
   useEffect(() => { setListaMeses(false); }, [mes, anoVisto, aba]);
 
@@ -653,113 +635,177 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
   }
 
   // Ícone circular contornado, no padrão dos apps de banco
-  // Navegação de tempo (ano + trilha de meses). Fica em posições diferentes
-  // conforme a aba: no Hoje vem depois dos atalhos; nas outras, no topo.
+  const irMesAnterior = () => {
+    const alvo = absVisto - 1;
+    setAnoVisto(anoDe(alvo));
+    setMes(mesDe(alvo));
+  };
+  const irMesSeguinte = () => {
+    const alvo = absVisto + 1;
+    setAnoVisto(anoDe(alvo));
+    setMes(mesDe(alvo));
+  };
+
+  // Um único seletor de período: setas para andar mês a mês e um toque no
+  // nome para abrir o painel com todos os meses. Substitui os dois controles
+  // separados (chips de ano + faixa rolável), que competiam entre si.
   const NavegacaoTempo = () => (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
-        {anosDisponiveis.map((a) => {
-          const ativo = a === anoVisto;
-          const ehAtual = a === anoAtual;
-          const corAtiva = ehAtual ? C.ink : C.azul;
-          return (
-            <button key={a} onClick={() => setAnoVisto(a)} aria-pressed={ativo} style={{
-              border: `1px solid ${ativo ? corAtiva : T.rule}`,
-              background: ativo ? corAtiva : 'transparent',
-              color: ativo ? '#fff' : ehAtual ? C.ink : C.azulMedio,
-              borderRadius: '20px', padding: '6px 14px', cursor: 'pointer',
-              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-              fontSize: '12.5px', fontWeight: 600, letterSpacing: '0.04em',
-            }}>
-              {a}
-            </button>
-          );
-        })}
-        {!ehMesCorrente && (
-          <button onClick={irParaHoje} style={{
-            border: 0, background: 'transparent', color: T.forte, cursor: 'pointer',
-            fontSize: '12px', fontWeight: 600, textDecoration: 'underline', padding: '6px 2px',
+    <div style={{ marginBottom: '22px' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '6px',
+        border: `1px solid ${T.rule}`, background: T.card,
+        borderRadius: '12px', padding: '5px',
+      }}>
+        <button
+          onClick={irMesAnterior}
+          disabled={absVisto - 1 < mesInicialAbs}
+          aria-label="Mês anterior"
+          style={{
+            flex: 'none', width: '34px', height: '34px', borderRadius: '9px',
+            border: 0, background: 'transparent',
+            color: absVisto - 1 < mesInicialAbs ? 'rgba(99,115,108,.35)' : C.ink,
+            cursor: absVisto - 1 < mesInicialAbs ? 'default' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px',
+          }}
+        >
+          ‹
+        </button>
+
+        <button
+          onClick={() => setListaMeses(!listaMeses)}
+          aria-expanded={listaMeses}
+          style={{
+            flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
+            cursor: 'pointer', padding: '5px 4px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+          }}
+        >
+          <span style={{ fontSize: '14.5px', fontWeight: 600, color: C.ink }}>
+            {MESES[mes]} <span style={{ color: outroAno ? C.azulMedio : C.soft, fontWeight: 500 }}>{anoVisto}</span>
+          </span>
+          <span aria-hidden="true" style={{
+            fontSize: '10px', color: C.soft, lineHeight: 1,
+            transform: listaMeses ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform .2s ease',
           }}>
-            ir para hoje
-          </button>
-        )}
+            ▼
+          </span>
+        </button>
+
+        <button
+          onClick={irMesSeguinte}
+          disabled={absVisto + 1 > mesFinalAbs}
+          aria-label="Próximo mês"
+          style={{
+            flex: 'none', width: '34px', height: '34px', borderRadius: '9px',
+            border: 0, background: 'transparent',
+            color: absVisto + 1 > mesFinalAbs ? 'rgba(99,115,108,.35)' : C.ink,
+            cursor: absVisto + 1 > mesFinalAbs ? 'default' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px',
+          }}
+        >
+          ›
+        </button>
       </div>
 
-      {outroAno && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '10px',
-          border: `1px solid ${C.azulPale}`, borderLeft: `4px solid ${C.azul}`,
-          background: C.azulBg, borderRadius: '10px', padding: '10px 13px', marginBottom: '14px',
+      {!ehMesCorrente && (
+        <button onClick={irParaHoje} style={{
+          border: 0, background: 'transparent', color: T.forte, cursor: 'pointer',
+          fontSize: '12px', fontWeight: 600, padding: '8px 2px 0',
         }}>
-          <span aria-hidden="true" style={{ fontSize: '14px', lineHeight: 1, color: C.azul }}>
+          ← voltar para {MESES[hoje.getMonth()].toLowerCase()}
+        </button>
+      )}
+
+      {listaMeses && (
+        <>
+          <div onClick={() => setListaMeses(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
+          <div style={{
+            position: 'relative', zIndex: 31, marginTop: '8px',
+            border: `1px solid ${T.rule}`, background: T.card,
+            borderRadius: '12px', padding: '12px',
+          }}>
+            {anosDisponiveis.length > 1 && (
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
+                {anosDisponiveis.map((a) => {
+                  const ativo = a === anoVisto;
+                  return (
+                    <button key={a} onClick={() => setAnoVisto(a)} style={{
+                      flex: 1, border: `1px solid ${ativo ? (a === anoAtual ? C.ink : C.azul) : T.rule}`,
+                      background: ativo ? (a === anoAtual ? C.ink : C.azul) : 'transparent',
+                      color: ativo ? '#fff' : C.soft,
+                      borderRadius: '9px', padding: '8px', cursor: 'pointer',
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '12.5px', fontWeight: 600,
+                    }}>
+                      {a}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+              {MESES.map((m, i) => {
+                const absI = absMes(anoVisto, i);
+                const info = calc.porMes[absI];
+                const v = info ? info.fim : 0;
+                const ativo = i === mes;
+                const desativado = absI < mesInicialAbs;
+                return (
+                  <button
+                    key={m}
+                    onClick={() => { setMes(i); setListaMeses(false); }}
+                    style={{
+                      border: `1px solid ${ativo ? T.forte : 'transparent'}`,
+                      background: ativo ? T.pale : 'rgba(18,33,28,.03)',
+                      borderRadius: '9px', padding: '9px 6px', cursor: 'pointer',
+                      opacity: desativado ? 0.42 : 1, textAlign: 'center',
+                    }}
+                  >
+                    <div style={{
+                      fontSize: '11.5px', fontWeight: ativo ? 600 : 500,
+                      color: ativo ? T.forte : C.ink,
+                    }}>
+                      {ABREV[i]}
+                    </div>
+                    <div style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '11px', fontWeight: 600, marginTop: '3px',
+                      color: v < 0 ? C.rose : desativado ? C.soft : T.forte,
+                    }}>
+                      {Vc(v)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ fontSize: '10.5px', color: C.soft, marginTop: '10px', textAlign: 'center' }}>
+              o valor abaixo do mês é o saldo no último dia dele
+            </div>
+          </div>
+        </>
+      )}
+
+      {outroAno && !listaMeses && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '9px', marginTop: '10px',
+          border: `1px solid ${C.azulPale}`, borderLeft: `4px solid ${C.azul}`,
+          background: C.azulBg, borderRadius: '10px', padding: '9px 12px',
+        }}>
+          <span aria-hidden="true" style={{ fontSize: '13px', lineHeight: 1, color: C.azul }}>
             {anoVisto > anoAtual ? '↗' : '↩'}
           </span>
-          <div style={{ fontSize: '12.5px', color: C.azul, lineHeight: 1.5 }}>
-            Você está em <strong>{anoVisto}</strong>. O saldo vem acumulado de {anoVisto - 1} e as contas
-            repetem o último valor informado.
+          <div style={{ fontSize: '12px', color: C.azul, lineHeight: 1.45 }}>
+            Saldo acumulado de {anoVisto - 1}; as contas repetem o último valor informado.
           </div>
         </div>
       )}
-
-      <div style={{ marginBottom: '22px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
-          <span style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px', letterSpacing: '0.12em',
-            textTransform: 'uppercase', color: outroAno ? C.azulMedio : C.soft,
-          }}>
-            Meses de {anoVisto}
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: C.soft }}>
-            arraste
-            <span aria-hidden="true" style={{ fontSize: '13px', lineHeight: 1 }}>↔</span>
-          </span>
-        </div>
-
-        <div style={{ position: 'relative' }}>
-          <div ref={trilhaRef} style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '6px', paddingRight: '26px' }}>
-            {MESES.map((m, i) => {
-              const abs = absMes(anoVisto, i);
-              const info = calc.porMes[abs];
-              const v = info ? info.fim : 0;
-              const on = i === mes;
-              const desativado = abs < mesInicialAbs;
-              const corAtiva = outroAno ? C.azul : C.ink;
-              return (
-                <button key={m} ref={on ? mesAtivoRef : null} onClick={() => setMes(i)} style={{
-                  flex: '1 0 auto', minWidth: '66px',
-                  border: `1px solid ${on ? corAtiva : T.rule}`,
-                  background: on ? corAtiva : 'transparent',
-                  borderRadius: '9px', padding: '8px 6px', cursor: 'pointer', textAlign: 'left',
-                  opacity: desativado && !on ? 0.45 : 1,
-                }}>
-                  <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', letterSpacing: '0.1em',
-                    textTransform: 'uppercase',
-                    color: on ? 'rgba(255,255,255,.7)' : outroAno ? C.azulMedio : C.soft,
-                  }}>
-                    {ABREV[i]}
-                  </div>
-                  <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                    fontSize: '13px', fontWeight: 600, marginTop: '3px',
-                    color: on ? (v < 0 ? '#F0A9A3' : outroAno ? '#A8CBE8' : '#8FD9BE') : v < 0 ? C.rose : T.forte,
-                  }}>
-                    {Vc(v)}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          <div aria-hidden="true" style={{
-            position: 'absolute', top: 0, right: 0, bottom: '6px', width: '34px',
-            background: `linear-gradient(to right, rgba(255,255,255,0), ${T.paper})`,
-            pointerEvents: 'none',
-          }} />
-        </div>
-      </div>
-    </>
+    </div>
   );
 
+  // Ícone circular contornado, no padrão dos apps de banco
   const IconeFaixa = ({ onClick, rotulo, children }) => (
     <button
       onClick={onClick}
@@ -975,7 +1021,12 @@ export default function ControleDiario({ familyId, supabase, onSair }) {
       <div style={{ padding: ehMobile ? '18px 12px 24px' : '22px 16px 40px' }}>
       <div style={{ maxWidth: '1180px', margin: '0 auto' }}>
         {mostrarFamilia && (
-          <PainelFamilia supabase={supabase} onFechar={() => setMostrarFamilia(false)} tema={T} />
+          <PainelFamilia
+            supabase={supabase}
+            onFechar={() => setMostrarFamilia(false)}
+            onTrocarFamilia={onTrocarFamilia}
+            tema={T}
+          />
         )}
 
         {mostrarMenu && (
@@ -2191,11 +2242,15 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd, tema }) {
 
 // Painel de família: lista quem está dentro e permite convidar/remover.
 // Aparece como uma janela sobre a tela, aberta pelo botão "Família" no topo.
-function PainelFamilia({ supabase, onFechar, tema }) {
+function PainelFamilia({ supabase, onFechar, onTrocarFamilia, tema }) {
   const T = tema || { forte: C.deep, pale: C.pale, card: C.card, rule: C.rule };
   const [membros, setMembros] = useState(null);
   const [meuId, setMeuId] = useState(null);
   const [convite, setConvite] = useState(null);
+  const [codigoEntrada, setCodigoEntrada] = useState('');
+  const [situacao, setSituacao] = useState(null);
+  const [confirmandoTroca, setConfirmandoTroca] = useState(false);
+  const [trocando, setTrocando] = useState(false);
   const [gerando, setGerando] = useState(false);
   const [erro, setErro] = useState('');
 
@@ -2207,6 +2262,9 @@ function PainelFamilia({ supabase, onFechar, tema }) {
       const { data, error } = await supabase.rpc('list_family_members');
       if (error) { setErro('Não foi possível carregar os membros.'); return; }
       setMembros(data || []);
+
+      const { data: sit } = await supabase.rpc('minha_situacao');
+      setSituacao(Array.isArray(sit) ? sit[0] : sit);
     })();
   }, []);
 
@@ -2237,6 +2295,22 @@ function PainelFamilia({ supabase, onFechar, tema }) {
 
   const copiarConvite = () => {
     if (convite) navigator.clipboard?.writeText(convite);
+  };
+
+  const entrarComCodigo = async () => {
+    setTrocando(true); setErro('');
+    try {
+      const { data, error } = await supabase.rpc('entrar_com_codigo', { p_code: codigoEntrada.trim() });
+      if (error) throw error;
+      setConfirmandoTroca(false);
+      onTrocarFamilia?.(data);
+      onFechar();
+    } catch (err) {
+      setErro(err.message || 'Não foi possível entrar com esse código.');
+      setConfirmandoTroca(false);
+    } finally {
+      setTrocando(false);
+    }
   };
 
   return (
@@ -2336,6 +2410,81 @@ function PainelFamilia({ supabase, onFechar, tema }) {
             Só o dono da família pode convidar ou remover pessoas.
           </p>
         )}
+
+        {/* ── entrar em outra família com um código, sem deslogar ── */}
+        <div style={{ borderTop: `1px solid ${T.rule}`, paddingTop: '16px', marginTop: '18px' }}>
+          <div style={{ fontSize: '13.5px', fontWeight: 600, color: C.ink, marginBottom: '4px' }}>
+            Entrar em outra família
+          </div>
+          <p style={{ fontSize: '12px', color: C.soft, marginBottom: '12px', lineHeight: 1.5 }}>
+            Recebeu um convite, ou tem o código antigo? Coloque aqui — não precisa sair do app.
+          </p>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="text"
+              value={codigoEntrada}
+              onChange={(e) => setCodigoEntrada(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+              placeholder="ABCD12"
+              maxLength={6}
+              style={{
+                flex: '1 1 auto', minWidth: 0,
+                border: `1px solid ${T.rule}`, borderRadius: '9px', padding: '10px 12px',
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: '14px', fontWeight: 600,
+                letterSpacing: '0.08em', color: C.ink, textTransform: 'uppercase',
+              }}
+            />
+            <button
+              onClick={() => setConfirmandoTroca(true)}
+              disabled={codigoEntrada.length < 3 || trocando}
+              style={{
+                flex: 'none',
+                background: codigoEntrada.length >= 3 ? T.forte : T.rule,
+                color: codigoEntrada.length >= 3 ? '#fff' : C.soft,
+                border: 0, borderRadius: '9px', padding: '10px 16px',
+                fontSize: '13.5px', fontWeight: 600,
+                cursor: codigoEntrada.length >= 3 ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Entrar
+            </button>
+          </div>
+
+          {confirmandoTroca && (
+            <div style={{
+              border: `1px solid ${C.rosePale}`, background: '#FDF6F5',
+              borderRadius: '10px', padding: '13px 14px', marginTop: '12px',
+            }}>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: C.rose, marginBottom: '6px' }}>
+                Confirma a troca?
+              </div>
+              <p style={{ fontSize: '12px', color: C.ink, lineHeight: 1.55, margin: '0 0 6px' }}>
+                Você vai sair {situacao?.family_name ? <>de <strong>{situacao.family_name}</strong></> : 'da família atual'} e
+                entrar na família do código <strong>{codigoEntrada}</strong>.
+              </p>
+              {situacao?.sou_unico_dono && (
+                <p style={{ fontSize: '12px', color: C.rose, lineHeight: 1.55, margin: '0 0 10px' }}>
+                  Atenção: você é o único dono da família atual. Saindo dela, os dados dela ficam sem
+                  ninguém com acesso.
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                <button onClick={entrarComCodigo} disabled={trocando} style={{
+                  background: C.rose, color: '#fff', border: 0, borderRadius: '8px',
+                  padding: '9px 15px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+                }}>
+                  {trocando ? 'Entrando...' : 'Sim, trocar'}
+                </button>
+                <button onClick={() => setConfirmandoTroca(false)} style={{
+                  border: `1px solid ${T.rule}`, background: 'transparent', color: C.soft,
+                  borderRadius: '8px', padding: '9px 15px', fontSize: '13px', cursor: 'pointer',
+                }}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {erro && (
           <div style={{
