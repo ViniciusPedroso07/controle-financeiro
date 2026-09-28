@@ -1697,31 +1697,55 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
             {metasCalculadas.length > 0 && (
               <div style={{
                 border: `1px solid ${T.pale}`, background: T.baseBg,
-                borderRadius: '12px', padding: '14px 16px', marginBottom: '18px',
+                borderRadius: '12px', padding: '15px 17px', marginBottom: '18px',
               }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: C.ink, marginBottom: '12px' }}>
+                  Dá para guardar tudo?
+                </div>
+
                 <div style={{
-                  display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                  gap: '10px', flexWrap: 'wrap',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  gap: '10px', padding: '6px 0',
                 }}>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: C.ink }}>
-                    Suas metas pedem por mês
-                  </span>
+                  <span style={{ fontSize: '12.5px', color: C.soft }}>Suas metas precisam de</span>
                   <span style={{
                     fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                    fontSize: '19px', fontWeight: 600, color: T.forte,
+                    fontSize: '14px', fontWeight: 600, color: C.ink,
                   }}>
                     {V(totalPorMesDasMetas)}
                   </span>
                 </div>
-                <div style={{ fontSize: '12px', color: C.soft, marginTop: '8px', lineHeight: 1.55 }}>
-                  {r.sobra > 0 ? (
-                    totalPorMesDasMetas <= r.sobra
-                      ? <>Cabe na sobra de {MESES[mes].toLowerCase()}, que é {V(r.sobra)}.</>
-                      : <>Sua sobra em {MESES[mes].toLowerCase()} é {V(r.sobra)} — faltam{' '}
-                         <strong style={{ color: C.rose }}>{V(totalPorMesDasMetas - r.sobra)}</strong> para dar conta de tudo.</>
-                  ) : (
-                    <>Em {MESES[mes].toLowerCase()} não sobra nada, então guardar vai exigir cortar algum gasto.</>
-                  )}
+
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  gap: '10px', padding: '6px 0',
+                }}>
+                  <span style={{ fontSize: '12.5px', color: C.soft }}>
+                    Sobra em {MESES[mes].toLowerCase()}
+                  </span>
+                  <span style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                    fontSize: '14px', fontWeight: 600, color: r.sobra < 0 ? C.rose : C.ink,
+                  }}>
+                    {V(r.sobra)}
+                  </span>
+                </div>
+
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  gap: '10px', paddingTop: '10px', marginTop: '4px',
+                  borderTop: `1px solid ${T.pale}`,
+                }}>
+                  <span style={{ fontSize: '12.5px', fontWeight: 600, color: C.ink }}>
+                    {r.sobra - totalPorMesDasMetas >= 0 ? 'Ainda sobraria' : 'Precisaria de mais'}
+                  </span>
+                  <span style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                    fontSize: '16px', fontWeight: 600,
+                    color: r.sobra - totalPorMesDasMetas >= 0 ? T.forte : C.rose,
+                  }}>
+                    {V(Math.abs(r.sobra - totalPorMesDasMetas))}
+                  </span>
                 </div>
               </div>
             )}
@@ -3206,6 +3230,19 @@ function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCamp
         </div>
       )}
 
+      {/* caminho até a meta */}
+      {alvo > 0 && (
+        <GraficoMeta
+          aportes={meta.aportes || []}
+          alvo={alvo}
+          prazo={prazo}
+          formatar={formatar}
+          tema={T}
+          concluida={concluida}
+          vencida={vencida}
+        />
+      )}
+
       {/* guardar agora */}
       <div style={{ display: 'flex', gap: '8px', marginTop: '13px' }}>
         <div style={{
@@ -3271,31 +3308,85 @@ function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCamp
       {aberto && (
         <div style={{ marginTop: '10px' }}>
           {(meta.aportes || []).length > 0 && (
-            <div style={{ marginBottom: '12px' }}>
-              {meta.aportes.map((a) => (
-                <div key={a.id} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  gap: '10px', padding: '6px 0', borderBottom: '1px solid rgba(18,33,28,.06)',
-                }}>
-                  <span style={{ fontSize: '11.5px', color: C.soft }}>
-                    {a.dia ? `${String(a.dia).padStart(2, '0')} de ` : ''}{rotuloAbs(Number(a.abs))}
-                  </span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{
-                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                      fontSize: '12.5px', fontWeight: 600, color: C.ink,
+            <div style={{ marginBottom: '14px' }}>
+              <div style={{
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
+                letterSpacing: '0.1em', textTransform: 'uppercase', color: C.soft,
+                marginBottom: '7px',
+              }}>
+                Quanto guardaram por mês
+              </div>
+
+              {Object.entries(
+                (meta.aportes || []).reduce((acc, a) => {
+                  const chave = Number(a.abs);
+                  (acc[chave] = acc[chave] || []).push(a);
+                  return acc;
+                }, {})
+              )
+                .sort((x, y) => Number(x[0]) - Number(y[0]))
+                .map(([absMesTexto, lista]) => {
+                  const totalDoMes = lista.reduce((soma, a) => soma + num(a.valor), 0);
+                  return (
+                    <div key={absMesTexto} style={{
+                      padding: '7px 0', borderBottom: '1px solid rgba(18,33,28,.06)',
                     }}>
-                      {formatar(num(a.valor))}
-                    </span>
-                    <button onClick={() => onDelAporte(a.id)} aria-label="Remover depósito" style={{
-                      border: 0, background: 'transparent', color: C.soft,
-                      cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: 0,
-                    }}>
-                      ×
-                    </button>
-                  </span>
-                </div>
-              ))}
+                      <div style={{
+                        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px',
+                      }}>
+                        <span style={{ fontSize: '12.5px', color: C.ink, fontWeight: 500 }}>
+                          {rotuloAbs(Number(absMesTexto))}
+                        </span>
+                        <span style={{
+                          fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                          fontSize: '13px', fontWeight: 600, color: T.forte,
+                        }}>
+                          {formatar(totalDoMes)}
+                        </span>
+                      </div>
+
+                      {lista.length > 1 && (
+                        <div style={{ marginTop: '4px', paddingLeft: '10px' }}>
+                          {lista.map((a) => (
+                            <div key={a.id} style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              gap: '8px', padding: '2px 0',
+                            }}>
+                              <span style={{ fontSize: '11px', color: C.soft }}>
+                                dia {String(a.dia || 1).padStart(2, '0')}
+                              </span>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                                <span style={{
+                                  fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                                  fontSize: '11.5px', color: C.soft,
+                                }}>
+                                  {formatar(num(a.valor))}
+                                </span>
+                                <button onClick={() => onDelAporte(a.id)} aria-label="Remover depósito" style={{
+                                  border: 0, background: 'transparent', color: C.soft,
+                                  cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: 0,
+                                }}>
+                                  ×
+                                </button>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {lista.length === 1 && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '-18px' }}>
+                          <button onClick={() => onDelAporte(lista[0].id)} aria-label="Remover depósito" style={{
+                            border: 0, background: 'transparent', color: C.soft,
+                            cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: '0 0 0 8px',
+                          }}>
+                            ×
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           )}
 
@@ -3461,5 +3552,102 @@ function NovaMeta({ onCriar, tema, absAtual }) {
         </button>
       </div>
     </form>
+  );
+}
+
+// Caminho até a meta: linha cheia é o quanto já foi acumulado mês a mês;
+// linha tracejada é o ritmo necessário para chegar no alvo dentro do prazo.
+// Ver as duas juntas mostra na hora se está adiantado ou atrasado.
+function GraficoMeta({ aportes, alvo, prazo, formatar, tema, concluida, vencida }) {
+  const T = tema || { forte: C.deep, medio: C.mid, rule: C.rule, pale: C.pale };
+  const hoje = new Date();
+  const absAtual = absMes(hoje.getFullYear(), hoje.getMonth());
+
+  const mesesComAporte = aportes.map((a) => Number(a.abs)).filter((n) => Number.isFinite(n));
+  const inicio = mesesComAporte.length ? Math.min(...mesesComAporte, absAtual) : absAtual;
+  const fim = Math.max(prazo, inicio, absAtual);
+  const qtdMeses = fim - inicio + 1;
+
+  if (alvo <= 0 || qtdMeses < 2 || qtdMeses > 120) return null;
+
+  // acumulado real, mês a mês, só até o mês corrente
+  const porMes = {};
+  aportes.forEach((a) => {
+    const k = Number(a.abs);
+    porMes[k] = (porMes[k] || 0) + num(a.valor);
+  });
+
+  const pontos = [];
+  let acumulado = 0;
+  for (let abs = inicio; abs <= fim; abs++) {
+    acumulado += porMes[abs] || 0;
+    if (abs <= absAtual) pontos.push({ abs, valor: acumulado });
+  }
+
+  const L = 8, R = 8, TOPO = 10, BASE = 20;
+  const Larg = 300, Alt = 108;
+  const teto = Math.max(alvo, acumulado) * 1.05;
+  const x = (abs) => L + ((abs - inicio) / (fim - inicio)) * (Larg - L - R);
+  const y = (v) => TOPO + (1 - v / teto) * (Alt - TOPO - BASE);
+
+  const caminhoReal = pontos.map((p, i) => `${i ? 'L' : 'M'}${x(p.abs).toFixed(1)},${y(p.valor).toFixed(1)}`).join(' ');
+  const areaReal = pontos.length > 1
+    ? `${caminhoReal} L${x(pontos[pontos.length - 1].abs).toFixed(1)},${y(0).toFixed(1)} L${x(pontos[0].abs).toFixed(1)},${y(0).toFixed(1)} Z`
+    : '';
+
+  const ultimo = pontos[pontos.length - 1];
+  const idealAgora = absAtual >= fim ? alvo : ((absAtual - inicio) / (fim - inicio)) * alvo;
+  const adiantado = ultimo && ultimo.valor >= idealAgora;
+
+  return (
+    <div style={{ marginTop: '14px' }}>
+      <svg viewBox={`0 0 ${Larg} ${Alt}`} width="100%" role="img" aria-label="Progresso da meta ao longo dos meses">
+        <defs>
+          <linearGradient id={`grad-${prazo}-${alvo}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={T.medio} stopOpacity="0.26" />
+            <stop offset="100%" stopColor={T.medio} stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+
+        {/* alvo */}
+        <line x1={L} y1={y(alvo)} x2={Larg - R} y2={y(alvo)} stroke={T.forte} strokeWidth="1" strokeDasharray="3 3" opacity="0.45" />
+        <text x={L} y={y(alvo) - 4} fontSize="8.5" fontFamily="'IBM Plex Mono', monospace" fill={T.forte} opacity="0.8">
+          meta {formatar(alvo)}
+        </text>
+
+        {/* ritmo necessário */}
+        <line
+          x1={x(inicio)} y1={y(0)} x2={x(fim)} y2={y(alvo)}
+          stroke={C.soft} strokeWidth="1.2" strokeDasharray="4 4" opacity="0.5"
+        />
+
+        {/* acumulado real */}
+        {areaReal && <path d={areaReal} fill={`url(#grad-${prazo}-${alvo})`} />}
+        {pontos.length > 1 && (
+          <path d={caminhoReal} fill="none" stroke={vencida ? C.rose : T.forte} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
+        )}
+        {ultimo && (
+          <circle cx={x(ultimo.abs)} cy={y(ultimo.valor)} r="3.4" fill={vencida ? C.rose : T.forte} stroke="#fff" strokeWidth="1.5" />
+        )}
+
+        {/* ponto final do alvo */}
+        <circle cx={x(fim)} cy={y(alvo)} r="3" fill="#fff" stroke={T.forte} strokeWidth="1.6" />
+
+        <text x={L} y={Alt - 6} fontSize="8.5" fontFamily="'IBM Plex Mono', monospace" fill={C.soft}>
+          {ABREV[mesDe(inicio)]}/{String(anoDe(inicio)).slice(2)}
+        </text>
+        <text x={Larg - R} y={Alt - 6} textAnchor="end" fontSize="8.5" fontFamily="'IBM Plex Mono', monospace" fill={C.soft}>
+          {ABREV[mesDe(fim)]}/{String(anoDe(fim)).slice(2)}
+        </text>
+      </svg>
+
+      {!concluida && ultimo && (
+        <div style={{ fontSize: '11px', color: C.soft, marginTop: '2px', lineHeight: 1.5 }}>
+          {adiantado
+            ? <>No ritmo: o esperado para agora era {formatar(idealAgora)}.</>
+            : <>Atrás do ritmo: o esperado para agora era {formatar(idealAgora)}.</>}
+        </div>
+      )}
+    </div>
   );
 }
