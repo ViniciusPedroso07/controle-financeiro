@@ -50,6 +50,7 @@ const PADRAO = {
   contasVariaveis: VARIAVEIS_INICIAIS,
   parcelas: PARCELAS_INICIAIS,
   metas: [],
+  categorias: [],
   pagos: {},
   dias: {},
 };
@@ -117,6 +118,17 @@ const migrarParaAbsoluto = (dados) => {
     contasVariaveis: converterLista(dados.contasVariaveis),
     parcelas,
     metas: (dados.metas || []).map((m) => ({ ...m, aportes: m.aportes || [] })),
+    // Na primeira vez, a lista nasce com as categorias que já estavam em uso
+    // mais as sugestões padrão — ninguém perde o que já tinha marcado.
+    categorias: (dados.categorias && dados.categorias.length)
+      ? dados.categorias
+      : Array.from(new Set([
+          ...['contasVariaveis', 'fixos', 'parcelas'].flatMap((chave) =>
+            (dados[chave] || []).map((x) => (x.categoria || '').trim()).filter(Boolean)),
+          ...Object.values(dados.dias || {}).flatMap((reg) =>
+            (reg?.lancamentos || []).map((l) => (l.categoria || '').trim()).filter(Boolean)),
+          ...CAT_SUGESTOES,
+        ])),
     pagos: dados.pagos || {},
     dias: dados.dias || {},
   };
@@ -178,6 +190,7 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
   const [editandoNome, setEditandoNome] = useState(false);
   const [menuLembrete, setMenuLembrete] = useState(null);
   const [mostrarExplicacao, setMostrarExplicacao] = useState(false);
+  const [mostrarCategorias, setMostrarCategorias] = useState(false);
   const [nome, setNome] = useState(() => {
     if (typeof window === 'undefined') return '';
     return window.localStorage?.getItem('vistta:nome') || '';
@@ -577,17 +590,84 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
   const mediaGasta = totalDias > 0 ? r.variaveis / totalDias : 0;
   const noRitmo = mediaGasta <= r.baseDia;
 
+  // Lista oficial de categorias, gerenciada pela pessoa. Inclui também
+  // qualquer categoria que ainda exista nos lançamentos mas tenha saído da
+  // lista, para nada ficar órfão sem aviso.
   const categoriasUsadas = useMemo(() => {
-    const usadas = new Set();
+    const oficiais = d.categorias || [];
+    const emUso = new Set();
     ['contasVariaveis', 'fixos', 'parcelas'].forEach((chave) => {
-      (d[chave] || []).forEach((v) => { if (v.categoria && v.categoria.trim()) usadas.add(v.categoria.trim()); });
+      (d[chave] || []).forEach((v) => { if (v.categoria && v.categoria.trim()) emUso.add(v.categoria.trim()); });
     });
     Object.values(d.dias || {}).forEach((reg) => {
-      (reg?.lancamentos || []).forEach((l) => { if (l.categoria && l.categoria.trim()) usadas.add(l.categoria.trim()); });
+      (reg?.lancamentos || []).forEach((l) => { if (l.categoria && l.categoria.trim()) emUso.add(l.categoria.trim()); });
     });
-    CAT_SUGESTOES.forEach((c) => usadas.add(c));
-    return Array.from(usadas);
+    const extras = Array.from(emUso).filter((c) => !oficiais.includes(c));
+    return [...oficiais, ...extras];
   }, [d]);
+
+  // Quantos lançamentos usam cada categoria — mostrado ao renomear ou excluir.
+  const contagemPorCategoria = useMemo(() => {
+    const conta = {};
+    const somar = (c) => { const k = (c || '').trim(); if (k) conta[k] = (conta[k] || 0) + 1; };
+    ['contasVariaveis', 'fixos', 'parcelas'].forEach((chave) =>
+      (d[chave] || []).forEach((v) => somar(v.categoria)));
+    Object.values(d.dias || {}).forEach((reg) =>
+      (reg?.lancamentos || []).forEach((l) => somar(l.categoria)));
+    return conta;
+  }, [d]);
+
+  const addCategoria = (nome) => {
+    const limpo = (nome || '').trim();
+    if (!limpo) return;
+    setD((p) => {
+      const atuais = p.categorias || [];
+      if (atuais.some((c) => c.toLowerCase() === limpo.toLowerCase())) return p;
+      return { ...p, categorias: [...atuais, limpo] };
+    });
+  };
+
+  // Renomear troca o nome em todos os lançamentos que usavam a antiga —
+  // senão eles ficariam apontando para uma categoria que não existe mais.
+  const renomearCategoria = (antiga, nova) => {
+    const limpa = (nova || '').trim();
+    if (!limpa || limpa === antiga) return;
+    setD((p) => {
+      const trocar = (c) => ((c || '').trim() === antiga ? limpa : c);
+      const dias = {};
+      Object.entries(p.dias || {}).forEach(([k, reg]) => {
+        dias[k] = { lancamentos: (reg?.lancamentos || []).map((l) => ({ ...l, categoria: trocar(l.categoria) })) };
+      });
+      return {
+        ...p,
+        categorias: (p.categorias || []).map((c) => (c === antiga ? limpa : c)),
+        contasVariaveis: (p.contasVariaveis || []).map((x) => ({ ...x, categoria: trocar(x.categoria) })),
+        fixos: (p.fixos || []).map((x) => ({ ...x, categoria: trocar(x.categoria) })),
+        parcelas: (p.parcelas || []).map((x) => ({ ...x, categoria: trocar(x.categoria) })),
+        dias,
+      };
+    });
+  };
+
+  // Excluir tira a categoria da lista e limpa quem apontava para ela,
+  // que passa a aparecer como "Sem categoria".
+  const excluirCategoria = (nome) => {
+    setD((p) => {
+      const limpar = (c) => ((c || '').trim() === nome ? '' : c);
+      const dias = {};
+      Object.entries(p.dias || {}).forEach(([k, reg]) => {
+        dias[k] = { lancamentos: (reg?.lancamentos || []).map((l) => ({ ...l, categoria: limpar(l.categoria) })) };
+      });
+      return {
+        ...p,
+        categorias: (p.categorias || []).filter((c) => c !== nome),
+        contasVariaveis: (p.contasVariaveis || []).map((x) => ({ ...x, categoria: limpar(x.categoria) })),
+        fixos: (p.fixos || []).map((x) => ({ ...x, categoria: limpar(x.categoria) })),
+        parcelas: (p.parcelas || []).map((x) => ({ ...x, categoria: limpar(x.categoria) })),
+        dias,
+      };
+    });
+  };
 
   const setPadrao = (lista, id, campo, valor) =>
     setD((p) => ({ ...p, [lista]: p[lista].map((i) => (i.id === id ? { ...i, [campo]: valor } : i)) }));
@@ -1177,6 +1257,18 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
           />
         )}
 
+        {mostrarCategorias && (
+          <PainelCategorias
+            categorias={d.categorias || []}
+            contagem={contagemPorCategoria}
+            tema={T}
+            onAdicionar={addCategoria}
+            onRenomear={renomearCategoria}
+            onExcluir={excluirCategoria}
+            onFechar={() => setMostrarCategorias(false)}
+          />
+        )}
+
         {editandoNome && (
           <EditarNome
             valorInicial={nome || primeiroNome}
@@ -1720,6 +1812,27 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
                   <BotaoAdd onClick={() => addLinha('parcelas')}>+ Outra compra parcelada</BotaoAdd>
                   <Total label={`Parcelas em ${MESES[mes].toLowerCase()}`} valor={V(r.parcelas ?? 0)} cor={C.clay} />
                 </Bloco>
+
+                <button
+                  onClick={() => setMostrarCategorias(true)}
+                  style={{
+                    width: '100%', marginTop: '16px',
+                    border: `1px solid ${T.rule}`, background: T.card,
+                    borderRadius: '12px', padding: '13px', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '10px', textAlign: 'left',
+                  }}
+                >
+                  <span>
+                    <span style={{ display: 'block', fontSize: '13.5px', fontWeight: 600, color: C.ink }}>
+                      Gerenciar categorias
+                    </span>
+                    <span style={{ display: 'block', fontSize: '11.5px', color: C.soft, marginTop: '2px' }}>
+                      Criar, renomear ou excluir as tags dos gastos
+                    </span>
+                  </span>
+                  <span aria-hidden="true" style={{ color: C.soft, fontSize: '14px', flex: 'none' }}>›</span>
+                </button>
             </>
           </div>
         )}
@@ -3930,5 +4043,217 @@ function LinhaCategoria({ categoria, valor, itens, cor, percentual, formatar, te
         </div>
       )}
     </div>
+  );
+}
+
+// Gerenciador de categorias: criar, renomear e excluir. Renomear arrasta
+// junto todos os lançamentos que usavam o nome antigo.
+function PainelCategorias({ categorias, contagem, tema, onAdicionar, onRenomear, onExcluir, onFechar }) {
+  const T = tema || { forte: C.deep, rule: C.rule, card: C.card, pale: C.pale };
+  const [nova, setNova] = useState('');
+  const [editando, setEditando] = useState(null);
+  const [textoEdicao, setTextoEdicao] = useState('');
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(null);
+  const [erro, setErro] = useState('');
+
+  const criar = (e) => {
+    e.preventDefault();
+    const limpo = nova.trim();
+    if (!limpo) return;
+    if (categorias.some((c) => c.toLowerCase() === limpo.toLowerCase())) {
+      setErro('Já existe uma categoria com esse nome.');
+      return;
+    }
+    onAdicionar(limpo);
+    setNova(''); setErro('');
+  };
+
+  const salvarEdicao = (antiga) => {
+    const limpo = textoEdicao.trim();
+    if (!limpo) { setEditando(null); return; }
+    if (limpo !== antiga && categorias.some((c) => c.toLowerCase() === limpo.toLowerCase())) {
+      setErro('Já existe uma categoria com esse nome.');
+      return;
+    }
+    onRenomear(antiga, limpo);
+    setEditando(null); setErro('');
+  };
+
+  return (
+    <>
+      <div onClick={onFechar} style={{ position: 'fixed', inset: 0, background: 'rgba(18,33,28,.35)', zIndex: 40 }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        zIndex: 41, width: 'min(420px, 92vw)', maxHeight: '82vh', overflowY: 'auto',
+        background: '#fff', borderRadius: '16px', padding: '22px',
+        boxShadow: '0 20px 50px rgba(18,33,28,.25)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+          <h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '17px', margin: 0 }}>
+            Categorias
+          </h2>
+          <button onClick={onFechar} aria-label="Fechar" style={{
+            border: 0, background: 'transparent', fontSize: '20px', color: C.soft, cursor: 'pointer', lineHeight: 1,
+          }}>
+            ×
+          </button>
+        </div>
+        <p style={{ fontSize: '12.5px', color: C.soft, margin: '0 0 16px', lineHeight: 1.5 }}>
+          Ao renomear, todos os lançamentos que usavam o nome antigo passam a usar o novo.
+        </p>
+
+        <form onSubmit={criar} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <input
+            value={nova}
+            onChange={(e) => { setNova(e.target.value); setErro(''); }}
+            placeholder="nova categoria"
+            style={{
+              flex: '1 1 auto', minWidth: 0,
+              border: `1px solid ${T.rule}`, borderRadius: '9px', padding: '10px 12px',
+              fontSize: '13.5px', color: C.ink,
+            }}
+          />
+          <button type="submit" disabled={!nova.trim()} style={{
+            flex: 'none', border: 0, borderRadius: '9px', padding: '10px 16px',
+            background: nova.trim() ? T.forte : T.rule,
+            color: nova.trim() ? '#fff' : C.soft,
+            fontSize: '13.5px', fontWeight: 600,
+            cursor: nova.trim() ? 'pointer' : 'not-allowed',
+          }}>
+            Criar
+          </button>
+        </form>
+
+        {categorias.length === 0 ? (
+          <p style={{ fontSize: '12.5px', color: C.soft, textAlign: 'center', padding: '20px 0' }}>
+            Nenhuma categoria ainda. Crie a primeira acima.
+          </p>
+        ) : (
+          <div>
+            {categorias.map((c) => {
+              const usos = contagem[c] || 0;
+              const emEdicao = editando === c;
+              const confirmando = confirmandoExclusao === c;
+
+              return (
+                <div key={c} style={{
+                  padding: '10px 0', borderBottom: `1px solid ${T.rule}`,
+                }}>
+                  {emEdicao ? (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        autoFocus
+                        value={textoEdicao}
+                        onChange={(e) => { setTextoEdicao(e.target.value); setErro(''); }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') salvarEdicao(c);
+                          if (e.key === 'Escape') { setEditando(null); setErro(''); }
+                        }}
+                        style={{
+                          flex: '1 1 auto', minWidth: 0,
+                          border: `1px solid ${T.forte}`, borderRadius: '8px', padding: '8px 10px',
+                          fontSize: '13.5px', color: C.ink,
+                        }}
+                      />
+                      <button onClick={() => salvarEdicao(c)} style={{
+                        flex: 'none', border: 0, borderRadius: '8px', padding: '8px 13px',
+                        background: T.forte, color: '#fff', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer',
+                      }}>
+                        Salvar
+                      </button>
+                      <button onClick={() => { setEditando(null); setErro(''); }} style={{
+                        flex: 'none', border: `1px solid ${T.rule}`, background: 'transparent',
+                        color: C.soft, borderRadius: '8px', padding: '8px 11px',
+                        fontSize: '12.5px', cursor: 'pointer',
+                      }}>
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+                    }}>
+                      <span style={{ minWidth: 0 }}>
+                        <span style={{
+                          display: 'block', fontSize: '13.5px', color: C.ink,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {c}
+                        </span>
+                        <span style={{ display: 'block', fontSize: '10.5px', color: C.soft, marginTop: '2px' }}>
+                          {usos === 0 ? 'sem uso' : `${usos} ${usos === 1 ? 'lançamento' : 'lançamentos'}`}
+                        </span>
+                      </span>
+
+                      <span style={{ display: 'flex', gap: '6px', flex: 'none' }}>
+                        <button
+                          onClick={() => { setEditando(c); setTextoEdicao(c); setErro(''); }}
+                          aria-label={`Renomear ${c}`}
+                          style={{
+                            border: `1px solid ${T.rule}`, background: 'transparent', color: C.ink,
+                            borderRadius: '8px', padding: '7px 11px', fontSize: '12px', cursor: 'pointer',
+                          }}
+                        >
+                          Renomear
+                        </button>
+                        <button
+                          onClick={() => setConfirmandoExclusao(confirmando ? null : c)}
+                          aria-label={`Excluir ${c}`}
+                          style={{
+                            border: `1px solid ${confirmando ? C.rose : T.rule}`,
+                            background: 'transparent', color: confirmando ? C.rose : C.soft,
+                            borderRadius: '8px', padding: '7px 10px', fontSize: '14px',
+                            lineHeight: 1, cursor: 'pointer',
+                          }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    </div>
+                  )}
+
+                  {confirmando && (
+                    <div style={{
+                      border: `1px solid ${C.rosePale}`, background: '#FDF6F5',
+                      borderRadius: '9px', padding: '11px 12px', marginTop: '9px',
+                    }}>
+                      <p style={{ fontSize: '12px', color: C.ink, margin: '0 0 9px', lineHeight: 1.5 }}>
+                        {usos === 0
+                          ? <>Excluir <strong>{c}</strong>? Ela não está sendo usada.</>
+                          : <>Excluir <strong>{c}</strong>? Os {usos} lançamentos que usam ela ficam
+                             como "Sem categoria" — nenhum valor é apagado.</>}
+                      </p>
+                      <div style={{ display: 'flex', gap: '7px' }}>
+                        <button onClick={() => { onExcluir(c); setConfirmandoExclusao(null); }} style={{
+                          border: 0, background: C.rose, color: '#fff', borderRadius: '8px',
+                          padding: '8px 13px', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer',
+                        }}>
+                          Excluir
+                        </button>
+                        <button onClick={() => setConfirmandoExclusao(null)} style={{
+                          border: `1px solid ${T.rule}`, background: 'transparent', color: C.soft,
+                          borderRadius: '8px', padding: '8px 13px', fontSize: '12.5px', cursor: 'pointer',
+                        }}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {erro && (
+          <div style={{
+            border: `1px solid ${C.rosePale}`, background: C.rosePale, color: C.rose,
+            borderRadius: '9px', padding: '9px 12px', fontSize: '12.5px', marginTop: '14px',
+          }}>
+            {erro}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
