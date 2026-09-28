@@ -555,6 +555,14 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
     }));
   };
 
+  const editAporte = (idMeta, idAporte, campo, valor) =>
+    setD((p) => ({
+      ...p,
+      metas: (p.metas || []).map((m) => (m.id === idMeta
+        ? { ...m, aportes: (m.aportes || []).map((a) => (a.id === idAporte ? { ...a, [campo]: valor } : a)) }
+        : m)),
+    }));
+
   const delAporte = (idMeta, idAporte) =>
     setD((p) => ({
       ...p,
@@ -1744,6 +1752,7 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
                     onAporte={(valor, tipo, abs) => addAporte(m.id, valor, tipo, abs)}
                     absAtual={absMes(hoje.getFullYear(), hoje.getMonth())}
                     onDelAporte={(idAporte) => delAporte(m.id, idAporte)}
+                    onEditAporte={(idAporte, campo, valor) => editAporte(m.id, idAporte, campo, valor)}
                     onCampo={(campo, valor) => setMeta(m.id, campo, valor)}
                     onExcluir={() => delMeta(m.id)}
                   />
@@ -3094,7 +3103,7 @@ function ExplicacaoLimite({
 
 // Cartão de uma meta: progresso, quanto falta, e o número que decide tudo —
 // quanto precisa entrar por mês para chegar no prazo.
-function CartaoMeta({ meta, formatar, tema, sobra, absAtual, onAporte, onDelAporte, onCampo, onExcluir }) {
+function CartaoMeta({ meta, formatar, tema, sobra, absAtual, onAporte, onDelAporte, onEditAporte, onCampo, onExcluir }) {
   const T = tema || { forte: C.deep, rule: C.rule, card: C.card, pale: C.pale };
   const [aporte, setAporte] = useState('');
   const [mesAporte, setMesAporte] = useState(absAtual);
@@ -3315,31 +3324,45 @@ function CartaoMeta({ meta, formatar, tema, sobra, absAtual, onAporte, onDelApor
       <button
         onClick={() => setAberto(!aberto)}
         style={{
-          border: 0, background: 'transparent', color: C.soft, cursor: 'pointer',
-          fontSize: '11.5px', padding: '10px 0 0', display: 'flex', alignItems: 'center', gap: '5px',
+          width: '100%', marginTop: '12px',
+          border: `1px solid ${T.rule}`, background: 'transparent',
+          borderRadius: '9px', padding: '9px 12px', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
+          color: C.ink, fontSize: '12.5px', fontWeight: 500,
         }}
       >
+        <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.soft} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <line x1="3" y1="6" x2="3.01" y2="6" />
+            <line x1="3" y1="12" x2="3.01" y2="12" />
+            <line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+          {(meta.aportes || []).length > 0
+            ? `Ver e editar ${meta.aportes.length} ${meta.aportes.length === 1 ? 'depósito' : 'depósitos'}`
+            : 'Ajustar valor e prazo'}
+        </span>
         <span aria-hidden="true" style={{
-          fontSize: '9px', transform: aberto ? 'rotate(180deg)' : 'rotate(0deg)',
+          fontSize: '9px', color: C.soft,
+          transform: aberto ? 'rotate(180deg)' : 'rotate(0deg)',
           transition: 'transform .2s ease', display: 'inline-block',
         }}>
           ▼
         </span>
-        {(meta.aportes || []).length > 0
-          ? `${meta.aportes.length} ${meta.aportes.length === 1 ? 'depósito' : 'depósitos'}`
-          : 'detalhes'}
       </button>
 
       {aberto && (
         <div style={{ marginTop: '10px' }}>
           {(meta.aportes || []).length > 0 && (
-            <div style={{ marginBottom: '14px' }}>
+            <div style={{ marginBottom: '16px' }}>
               <div style={{
                 fontFamily: "'IBM Plex Mono', monospace", fontSize: '9.5px',
                 letterSpacing: '0.1em', textTransform: 'uppercase', color: C.soft,
-                marginBottom: '7px',
+                marginBottom: '8px',
               }}>
-                Quanto guardaram por mês
+                Depósitos · toque para corrigir
               </div>
 
               {Object.entries(
@@ -3351,73 +3374,111 @@ function CartaoMeta({ meta, formatar, tema, sobra, absAtual, onAporte, onDelApor
               )
                 .sort((x, y) => Number(x[0]) - Number(y[0]))
                 .map(([absMesTexto, lista]) => {
-                  const totalDoMes = lista.reduce((soma, a) => soma + (a.tipo === 'retirada' ? -num(a.valor) : num(a.valor)), 0);
+                  const liquidoDoMes = lista.reduce(
+                    (soma, a) => soma + (a.tipo === 'retirada' ? -num(a.valor) : num(a.valor)), 0
+                  );
                   return (
-                    <div key={absMesTexto} style={{
-                      padding: '7px 0', borderBottom: '1px solid rgba(18,33,28,.06)',
-                    }}>
+                    <div key={absMesTexto} style={{ marginBottom: '12px' }}>
                       <div style={{
-                        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px',
+                        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                        gap: '10px', paddingBottom: '5px', borderBottom: `1px solid ${T.rule}`,
                       }}>
-                        <span style={{ fontSize: '12.5px', color: C.ink, fontWeight: 500 }}>
+                        <span style={{ fontSize: '12px', color: C.ink, fontWeight: 600 }}>
                           {rotuloAbs(Number(absMesTexto))}
-                          {lista.length === 1 && lista[0].tipo === 'retirada' && (
-                            <span style={{ color: C.rose, fontWeight: 400, marginLeft: '6px', fontSize: '11px' }}>
-                              retirada
-                            </span>
-                          )}
                         </span>
                         <span style={{
                           fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                          fontSize: '13px', fontWeight: 600,
-                          color: totalDoMes < 0 ? C.rose : T.forte,
+                          fontSize: '12.5px', fontWeight: 600,
+                          color: liquidoDoMes < 0 ? C.rose : T.forte,
                         }}>
-                          {totalDoMes < 0 ? '−' : '+'}{formatar(Math.abs(totalDoMes))}
+                          {liquidoDoMes < 0 ? '−' : '+'}{formatar(Math.abs(liquidoDoMes))}
                         </span>
                       </div>
 
-                      {lista.length > 1 && (
-                        <div style={{ marginTop: '4px', paddingLeft: '10px' }}>
-                          {lista.map((a) => (
-                            <div key={a.id} style={{
-                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                              gap: '8px', padding: '2px 0',
-                            }}>
-                              <span style={{ fontSize: '11px', color: C.soft }}>
-                                {a.dia ? `dia ${String(a.dia).padStart(2, '0')}` : 'no mês'}
-                                {a.tipo === 'retirada' && (
-                                  <span style={{ color: C.rose, marginLeft: '5px' }}>retirada</span>
-                                )}
-                              </span>
-                              <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                                <span style={{
-                                  fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                                  fontSize: '11.5px', color: a.tipo === 'retirada' ? C.rose : C.soft,
-                                }}>
-                                  {a.tipo === 'retirada' ? '−' : '+'}{formatar(num(a.valor))}
-                                </span>
-                                <button onClick={() => onDelAporte(a.id)} aria-label="Remover depósito" style={{
-                                  border: 0, background: 'transparent', color: C.soft,
-                                  cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: 0,
-                                }}>
-                                  ×
-                                </button>
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {lista.length === 1 && (
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '-18px' }}>
-                          <button onClick={() => onDelAporte(lista[0].id)} aria-label="Remover depósito" style={{
-                            border: 0, background: 'transparent', color: C.soft,
-                            cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: '0 0 0 8px',
+                      {lista.map((a) => {
+                        const ehRetirada = a.tipo === 'retirada';
+                        return (
+                          <div key={a.id} style={{
+                            display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 0',
                           }}>
-                            ×
-                          </button>
-                        </div>
-                      )}
+                            {/* alterna entre depósito e retirada */}
+                            <button
+                              onClick={() => onEditAporte(a.id, 'tipo', ehRetirada ? 'deposito' : 'retirada')}
+                              aria-label={ehRetirada ? 'Marcar como depósito' : 'Marcar como retirada'}
+                              title={ehRetirada ? 'É uma retirada — toque para virar depósito' : 'É um depósito — toque para virar retirada'}
+                              style={{
+                                flex: 'none', width: '26px', height: '30px', borderRadius: '7px',
+                                border: `1px solid ${ehRetirada ? C.rosePale : T.pale}`,
+                                background: ehRetirada ? C.rosePale : T.pale,
+                                color: ehRetirada ? C.rose : T.forte,
+                                fontFamily: "'IBM Plex Mono', monospace",
+                                fontSize: '14px', fontWeight: 700, lineHeight: 1, cursor: 'pointer', padding: 0,
+                              }}
+                            >
+                              {ehRetirada ? '−' : '+'}
+                            </button>
+
+                            {/* valor editável */}
+                            <div style={{
+                              display: 'flex', alignItems: 'center', flex: '0 1 106px', minWidth: 0,
+                              border: `1px solid ${T.rule}`, background: '#fff',
+                              borderRadius: '7px', overflow: 'hidden',
+                            }}>
+                              <span aria-hidden="true" style={{
+                                flex: 'none', paddingLeft: '8px',
+                                fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', color: C.soft,
+                              }}>
+                                R$
+                              </span>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                aria-label="Valor do depósito"
+                                value={a.valor ?? ''}
+                                onChange={(e) => onEditAporte(a.id, 'valor', e.target.value)}
+                                style={{
+                                  flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
+                                  padding: '7px 8px 7px 5px', fontFamily: "'IBM Plex Mono', monospace",
+                                  fontVariantNumeric: 'tabular-nums', fontSize: '12.5px',
+                                  color: ehRetirada ? C.rose : C.ink, fontWeight: 600,
+                                  textAlign: 'right', outline: 'none',
+                                }}
+                              />
+                            </div>
+
+                            {/* mês editável */}
+                            <select
+                              value={Number(a.abs)}
+                              onChange={(e) => onEditAporte(a.id, 'abs', Number(e.target.value))}
+                              aria-label="Mês do depósito"
+                              style={{
+                                flex: '1 1 auto', minWidth: 0,
+                                border: `1px solid ${T.rule}`, background: '#fff', borderRadius: '7px',
+                                padding: '7px 6px', fontFamily: 'Inter, sans-serif',
+                                fontSize: '11.5px', color: C.ink,
+                              }}
+                            >
+                              {Array.from({ length: 30 }, (_, i) => absAtual - 24 + i).map((abs) => (
+                                <option key={abs} value={abs}>
+                                  {MESES[mesDe(abs)]} {anoDe(abs)}
+                                </option>
+                              ))}
+                            </select>
+
+                            <button
+                              onClick={() => onDelAporte(a.id)}
+                              aria-label="Excluir depósito"
+                              style={{
+                                flex: 'none', width: '26px', height: '30px', borderRadius: '7px',
+                                border: 0, background: 'transparent', color: C.soft,
+                                cursor: 'pointer', fontSize: '15px', lineHeight: 1, padding: 0,
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })}
