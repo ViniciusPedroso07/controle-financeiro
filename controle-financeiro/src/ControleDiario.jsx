@@ -49,6 +49,7 @@ const PADRAO = {
   fixos: FIXOS_INICIAIS,
   contasVariaveis: VARIAVEIS_INICIAIS,
   parcelas: PARCELAS_INICIAIS,
+  metas: [],
   pagos: {},
   dias: {},
 };
@@ -115,6 +116,7 @@ const migrarParaAbsoluto = (dados) => {
     fixos: converterLista(dados.fixos),
     contasVariaveis: converterLista(dados.contasVariaveis),
     parcelas,
+    metas: (dados.metas || []).map((m) => ({ ...m, aportes: m.aportes || [] })),
     pagos: dados.pagos || {},
     dias: dados.dias || {},
   };
@@ -157,6 +159,7 @@ const ABAS = [
   { id: 'hoje', rotulo: 'Hoje', icone: '◈' },
   { id: 'calendario', rotulo: 'Calendário', icone: '▤' },
   { id: 'contas', rotulo: 'Contas', icone: '☰' },
+  { id: 'metas', rotulo: 'Metas', icone: '◎' },
 ];
 
 export default function ControleDiario({ familyId, supabase, onSair, onTrocarFamilia }) {
@@ -494,6 +497,62 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
 
     return lista.sort((a, b) => a.dia - b.dia);
   }, [d, absVisto, ehMesCorrente]);
+
+  // Cada meta: quanto já foi guardado, quanto falta, quantos meses restam e
+  // — o número que mais importa — quanto precisa entrar por mês para chegar lá.
+  const metasCalculadas = useMemo(() => {
+    const absHoje = absMes(hoje.getFullYear(), hoje.getMonth());
+    return (d.metas || []).map((m) => {
+      const alvo = num(m.alvo);
+      const guardado = (m.aportes || []).reduce((soma, a) => soma + num(a.valor), 0);
+      const falta = Math.max(0, alvo - guardado);
+      const prazo = Number(m.prazo ?? absHoje);
+      const mesesRestantes = Math.max(0, prazo - absHoje + 1);
+      const concluida = alvo > 0 && guardado >= alvo;
+      const vencida = !concluida && mesesRestantes === 0;
+      const porMes = concluida ? 0 : mesesRestantes > 0 ? falta / mesesRestantes : falta;
+      const progresso = alvo > 0 ? Math.min(1, guardado / alvo) : 0;
+      return { ...m, alvo, guardado, falta, prazo, mesesRestantes, concluida, vencida, porMes, progresso };
+    });
+  }, [d.metas]);
+
+  const totalPorMesDasMetas = metasCalculadas.reduce((soma, m) => soma + (m.vencida ? 0 : m.porMes), 0);
+  const totalGuardado = metasCalculadas.reduce((soma, m) => soma + m.guardado, 0);
+
+  const addMeta = (nome, alvo, prazo) =>
+    setD((p) => ({
+      ...p,
+      metas: [...(p.metas || []), {
+        id: `meta${Date.now()}`, nome, alvo, prazo, aportes: [],
+      }],
+    }));
+
+  const setMeta = (id, campo, valor) =>
+    setD((p) => ({ ...p, metas: (p.metas || []).map((m) => (m.id === id ? { ...m, [campo]: valor } : m)) }));
+
+  const delMeta = (id) =>
+    setD((p) => ({ ...p, metas: (p.metas || []).filter((m) => m.id !== id) }));
+
+  const addAporte = (idMeta, valor) =>
+    setD((p) => ({
+      ...p,
+      metas: (p.metas || []).map((m) => (m.id === idMeta
+        ? { ...m, aportes: [...(m.aportes || []), {
+            id: `ap${Date.now()}`,
+            valor,
+            abs: absMes(hoje.getFullYear(), hoje.getMonth()),
+            dia: hoje.getDate(),
+          }] }
+        : m)),
+    }));
+
+  const delAporte = (idMeta, idAporte) =>
+    setD((p) => ({
+      ...p,
+      metas: (p.metas || []).map((m) => (m.id === idMeta
+        ? { ...m, aportes: (m.aportes || []).filter((a) => a.id !== idAporte) }
+        : m)),
+    }));
 
   const marcarPaga = (chave) =>
     setD((p) => ({ ...p, pagos: { ...(p.pagos || {}), [chave]: true } }));
@@ -1000,6 +1059,19 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
                 fontSize: '13px', fontWeight: 600, color: 'rgba(255,255,255,.9)',
               }}>
                 fecha em {V(r.fim)}
+              </div>
+            </div>
+          )}
+
+          {aba === 'metas' && (
+            <div style={{ marginTop: '22px' }}>
+              <div style={{ fontFamily: "'Bricolage Grotesque', system-ui", fontSize: 'clamp(24px, 6vw, 32px)', fontWeight: 800 }}>
+                Metas
+              </div>
+              <div style={{ fontSize: '12.5px', color: 'rgba(255,255,255,.75)', marginTop: '8px' }}>
+                {metasCalculadas.length === 0
+                  ? 'Guarde para uma viagem, uma reforma, o que quiser.'
+                  : <>Já guardado: {V(totalGuardado)}</>}
               </div>
             </div>
           )}
@@ -1617,6 +1689,76 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
                 </Bloco>
             </>
           </div>
+        )}
+
+        {/* ═══════════ ABA: METAS ═══════════ */}
+        {aba === 'metas' && (
+          <>
+            {metasCalculadas.length > 0 && (
+              <div style={{
+                border: `1px solid ${T.pale}`, background: T.baseBg,
+                borderRadius: '12px', padding: '14px 16px', marginBottom: '18px',
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                  gap: '10px', flexWrap: 'wrap',
+                }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: C.ink }}>
+                    Suas metas pedem por mês
+                  </span>
+                  <span style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                    fontSize: '19px', fontWeight: 600, color: T.forte,
+                  }}>
+                    {V(totalPorMesDasMetas)}
+                  </span>
+                </div>
+                <div style={{ fontSize: '12px', color: C.soft, marginTop: '8px', lineHeight: 1.55 }}>
+                  {r.sobra > 0 ? (
+                    totalPorMesDasMetas <= r.sobra
+                      ? <>Cabe na sobra de {MESES[mes].toLowerCase()}, que é {V(r.sobra)}.</>
+                      : <>Sua sobra em {MESES[mes].toLowerCase()} é {V(r.sobra)} — faltam{' '}
+                         <strong style={{ color: C.rose }}>{V(totalPorMesDasMetas - r.sobra)}</strong> para dar conta de tudo.</>
+                  ) : (
+                    <>Em {MESES[mes].toLowerCase()} não sobra nada, então guardar vai exigir cortar algum gasto.</>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {metasCalculadas.length === 0 ? (
+              <div style={{
+                border: `1px dashed ${T.rule}`, borderRadius: '14px',
+                padding: '26px 20px', textAlign: 'center', marginBottom: '18px',
+              }}>
+                <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '16px', marginBottom: '7px' }}>
+                  Nenhuma meta ainda
+                </div>
+                <p style={{ fontSize: '12.5px', color: C.soft, lineHeight: 1.6, maxWidth: '36ch', margin: '0 auto' }}>
+                  Diga quanto custa e para quando. O app calcula quanto você precisa guardar por mês
+                  e acompanha o progresso.
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '12px', marginBottom: '18px' }}>
+                {metasCalculadas.map((m) => (
+                  <CartaoMeta
+                    key={m.id}
+                    meta={m}
+                    formatar={V}
+                    tema={T}
+                    sobra={r.sobra}
+                    onAporte={(valor) => addAporte(m.id, valor)}
+                    onDelAporte={(idAporte) => delAporte(m.id, idAporte)}
+                    onCampo={(campo, valor) => setMeta(m.id, campo, valor)}
+                    onExcluir={() => delMeta(m.id)}
+                  />
+                ))}
+              </div>
+            )}
+
+            <NovaMeta onCriar={addMeta} tema={T} absAtual={absMes(hoje.getFullYear(), hoje.getMonth())} />
+          </>
         )}
 
         <datalist id="cd-categorias">
@@ -2543,6 +2685,13 @@ function PainelMenu({ tema, abaAtual, onIrPara, onAbrirFamilia, onSair, onFechar
       <line x1="4" y1="18" x2="14" y2="18" />
     </svg>
   );
+  const iconeMetas = (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="5" />
+      <circle cx="12" cy="12" r="1.2" />
+    </svg>
+  );
   const iconeMembros = (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -2570,6 +2719,7 @@ function PainelMenu({ tema, abaAtual, onIrPara, onAbrirFamilia, onSair, onFechar
         <Linha onClick={() => onIrPara('hoje')} icone={iconeHoje} texto="Hoje" destaque={abaAtual === 'hoje'} />
         <Linha onClick={() => onIrPara('calendario')} icone={iconeCalendario} texto="Calendário" destaque={abaAtual === 'calendario'} />
         <Linha onClick={() => onIrPara('contas')} icone={iconeContas} texto="Contas" destaque={abaAtual === 'contas'} />
+        <Linha onClick={() => onIrPara('metas')} icone={iconeMetas} texto="Metas" destaque={abaAtual === 'metas'} />
 
         <div style={{ height: '1px', background: T.rule, margin: '6px 8px' }} />
 
@@ -2941,5 +3091,375 @@ function ExplicacaoLimite({
         </p>
       </div>
     </>
+  );
+}
+
+// Cartão de uma meta: progresso, quanto falta, e o número que decide tudo —
+// quanto precisa entrar por mês para chegar no prazo.
+function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCampo, onExcluir }) {
+  const T = tema || { forte: C.deep, rule: C.rule, card: C.card, pale: C.pale };
+  const [aporte, setAporte] = useState('');
+  const [aberto, setAberto] = useState(false);
+  const [editando, setEditando] = useState(false);
+
+  const { nome, alvo, guardado, falta, prazo, mesesRestantes, concluida, vencida, porMes, progresso } = meta;
+
+  const cabeNaSobra = sobra > 0 && porMes <= sobra;
+  const estado = concluida
+    ? { texto: 'Concluída', cor: T.forte, fundo: T.pale }
+    : vencida
+      ? { texto: 'Prazo vencido', cor: C.rose, fundo: C.rosePale }
+      : cabeNaSobra
+        ? { texto: 'Cabe na sobra', cor: T.forte, fundo: T.pale }
+        : { texto: 'Aperta o mês', cor: C.amber, fundo: '#F3E6CC' };
+
+  const confirmarAporte = () => {
+    if (num(aporte) > 0) { onAporte(aporte); setAporte(''); }
+  };
+
+  return (
+    <div style={{
+      border: `1px solid ${T.rule}`, background: T.card,
+      borderRadius: '14px', padding: '16px 17px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+        <div style={{ minWidth: 0 }}>
+          {editando ? (
+            <input
+              autoFocus
+              value={nome ?? ''}
+              onChange={(e) => onCampo('nome', e.target.value)}
+              onBlur={() => setEditando(false)}
+              onKeyDown={(e) => { if (e.key === 'Enter') setEditando(false); }}
+              style={{
+                border: `1px solid ${T.rule}`, borderRadius: '8px', padding: '5px 8px',
+                fontSize: '15px', fontWeight: 600, color: C.ink, width: '100%',
+              }}
+            />
+          ) : (
+            <button onClick={() => setEditando(true)} style={{
+              border: 0, background: 'transparent', padding: 0, cursor: 'pointer',
+              fontSize: '15px', fontWeight: 600, color: C.ink, textAlign: 'left',
+            }}>
+              {nome || 'Meta sem nome'}
+            </button>
+          )}
+          <div style={{ fontSize: '11.5px', color: C.soft, marginTop: '3px' }}>
+            {concluida
+              ? 'você chegou lá'
+              : vencida
+                ? `o prazo era ${rotuloAbs(prazo)}`
+                : `até ${rotuloAbs(prazo)} · ${mesesRestantes} ${mesesRestantes === 1 ? 'mês' : 'meses'}`}
+          </div>
+        </div>
+
+        <span style={{
+          flex: 'none', background: estado.fundo, color: estado.cor,
+          borderRadius: '20px', padding: '4px 10px',
+          fontSize: '10.5px', fontWeight: 600, whiteSpace: 'nowrap',
+        }}>
+          {estado.texto}
+        </span>
+      </div>
+
+      {/* progresso */}
+      <div style={{ marginTop: '14px' }}>
+        <div style={{
+          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+          gap: '10px', marginBottom: '6px',
+        }}>
+          <span style={{
+            fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+            fontSize: '14px', fontWeight: 600, color: C.ink,
+          }}>
+            {formatar(guardado)}
+          </span>
+          <span style={{ fontSize: '11.5px', color: C.soft }}>
+            de {formatar(alvo)} · {Math.round(progresso * 100)}%
+          </span>
+        </div>
+        <div style={{ height: '9px', borderRadius: '5px', background: 'rgba(18,33,28,.07)', overflow: 'hidden' }}>
+          <div style={{
+            height: '100%', borderRadius: '5px',
+            background: concluida ? T.forte : vencida ? C.rose : T.medio,
+            width: `${Math.max(progresso > 0 ? 3 : 0, progresso * 100)}%`,
+            transition: 'width .3s ease',
+          }} />
+        </div>
+      </div>
+
+      {/* o número que importa */}
+      {!concluida && (
+        <div style={{
+          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+          gap: '10px', marginTop: '13px', paddingTop: '12px', borderTop: `1px solid ${T.rule}`,
+        }}>
+          <span style={{ fontSize: '12.5px', color: C.soft }}>
+            {vencida ? 'Ainda falta' : 'Guardar por mês'}
+          </span>
+          <span style={{
+            fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+            fontSize: '17px', fontWeight: 600, color: vencida ? C.rose : T.forte,
+          }}>
+            {formatar(vencida ? falta : porMes)}
+          </span>
+        </div>
+      )}
+
+      {/* guardar agora */}
+      <div style={{ display: 'flex', gap: '8px', marginTop: '13px' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', flex: '1 1 auto', minWidth: 0,
+          border: `1px solid ${T.rule}`, background: '#fff', borderRadius: '9px', overflow: 'hidden',
+        }}>
+          <span aria-hidden="true" style={{
+            flex: 'none', paddingLeft: '10px',
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px', color: C.soft,
+          }}>
+            R$
+          </span>
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="guardar agora"
+            aria-label="Valor a guardar"
+            value={aporte}
+            onChange={(e) => setAporte(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') confirmarAporte(); }}
+            style={{
+              flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
+              padding: '9px 10px 9px 6px', fontFamily: "'IBM Plex Mono', monospace",
+              fontVariantNumeric: 'tabular-nums', fontSize: '13.5px', color: C.ink,
+              textAlign: 'right', outline: 'none',
+            }}
+          />
+        </div>
+        <button
+          onClick={confirmarAporte}
+          disabled={num(aporte) <= 0}
+          style={{
+            flex: 'none', border: 0, borderRadius: '9px', padding: '9px 16px',
+            background: num(aporte) > 0 ? T.forte : T.rule,
+            color: num(aporte) > 0 ? '#fff' : C.soft,
+            fontSize: '13.5px', fontWeight: 600,
+            cursor: num(aporte) > 0 ? 'pointer' : 'not-allowed',
+          }}
+        >
+          Guardar
+        </button>
+      </div>
+
+      {/* histórico e ajustes */}
+      <button
+        onClick={() => setAberto(!aberto)}
+        style={{
+          border: 0, background: 'transparent', color: C.soft, cursor: 'pointer',
+          fontSize: '11.5px', padding: '10px 0 0', display: 'flex', alignItems: 'center', gap: '5px',
+        }}
+      >
+        <span aria-hidden="true" style={{
+          fontSize: '9px', transform: aberto ? 'rotate(180deg)' : 'rotate(0deg)',
+          transition: 'transform .2s ease', display: 'inline-block',
+        }}>
+          ▼
+        </span>
+        {(meta.aportes || []).length > 0
+          ? `${meta.aportes.length} ${meta.aportes.length === 1 ? 'depósito' : 'depósitos'}`
+          : 'detalhes'}
+      </button>
+
+      {aberto && (
+        <div style={{ marginTop: '10px' }}>
+          {(meta.aportes || []).length > 0 && (
+            <div style={{ marginBottom: '12px' }}>
+              {meta.aportes.map((a) => (
+                <div key={a.id} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: '10px', padding: '6px 0', borderBottom: '1px solid rgba(18,33,28,.06)',
+                }}>
+                  <span style={{ fontSize: '11.5px', color: C.soft }}>
+                    {a.dia ? `${String(a.dia).padStart(2, '0')} de ` : ''}{rotuloAbs(Number(a.abs))}
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                      fontSize: '12.5px', fontWeight: 600, color: C.ink,
+                    }}>
+                      {formatar(num(a.valor))}
+                    </span>
+                    <button onClick={() => onDelAporte(a.id)} aria-label="Remover depósito" style={{
+                      border: 0, background: 'transparent', color: C.soft,
+                      cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: 0,
+                    }}>
+                      ×
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: '11px', color: C.soft }}>
+              Custa
+              <input
+                type="text"
+                inputMode="decimal"
+                value={meta.alvo ?? ''}
+                onChange={(e) => onCampo('alvo', e.target.value)}
+                style={{
+                  display: 'block', marginTop: '3px', width: '108px',
+                  border: `1px solid ${T.rule}`, borderRadius: '8px', padding: '7px 9px',
+                  fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                  fontSize: '12.5px', color: C.ink, textAlign: 'right',
+                }}
+              />
+            </label>
+
+            <label style={{ fontSize: '11px', color: C.soft, flex: '1 1 auto', minWidth: '130px' }}>
+              Até
+              <select
+                value={prazo}
+                onChange={(e) => onCampo('prazo', Number(e.target.value))}
+                style={{
+                  display: 'block', marginTop: '3px', width: '100%',
+                  border: `1px solid ${T.rule}`, borderRadius: '8px', padding: '7px 8px',
+                  fontFamily: 'Inter, sans-serif', fontSize: '12.5px', color: C.ink, background: '#fff',
+                }}
+              >
+                {Array.from({ length: 60 }, (_, i) => prazo - 12 + i).map((abs) => (
+                  <option key={abs} value={abs}>{MESES[mesDe(abs)]} {anoDe(abs)}</option>
+                ))}
+              </select>
+            </label>
+
+            <button onClick={onExcluir} style={{
+              border: `1px solid ${C.rosePale}`, background: 'transparent', color: C.rose,
+              borderRadius: '8px', padding: '8px 12px', fontSize: '12px', cursor: 'pointer',
+              alignSelf: 'flex-end',
+            }}>
+              Excluir meta
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Formulário para criar uma meta nova.
+function NovaMeta({ onCriar, tema, absAtual }) {
+  const T = tema || { forte: C.deep, rule: C.rule, card: C.card };
+  const [aberto, setAberto] = useState(false);
+  const [nome, setNome] = useState('');
+  const [alvo, setAlvo] = useState('');
+  const [prazo, setPrazo] = useState(absAtual + 12);
+
+  const criar = (e) => {
+    e.preventDefault();
+    if (!nome.trim() || num(alvo) <= 0) return;
+    onCriar(nome.trim(), alvo, prazo);
+    setNome(''); setAlvo(''); setPrazo(absAtual + 12); setAberto(false);
+  };
+
+  if (!aberto) {
+    return (
+      <button onClick={() => setAberto(true)} style={{
+        width: '100%', border: `1px solid ${T.rule}`, background: T.card,
+        borderRadius: '12px', padding: '13px', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px',
+        fontSize: '13.5px', fontWeight: 600, color: C.ink,
+      }}>
+        <span aria-hidden="true" style={{ fontSize: '15px', lineHeight: 1 }}>+</span>
+        Nova meta
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={criar} style={{
+      border: `1px solid ${T.rule}`, background: T.card, borderRadius: '14px', padding: '16px 17px',
+    }}>
+      <div style={{ fontSize: '14px', fontWeight: 600, color: C.ink, marginBottom: '12px' }}>
+        Nova meta
+      </div>
+
+      <input
+        autoFocus
+        value={nome}
+        onChange={(e) => setNome(e.target.value)}
+        placeholder="ex: Viagem para o Chile"
+        style={{
+          width: '100%', border: `1px solid ${T.rule}`, borderRadius: '9px',
+          padding: '10px 12px', fontSize: '14px', color: C.ink, marginBottom: '10px',
+        }}
+      />
+
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+        <label style={{ fontSize: '11px', color: C.soft }}>
+          Quanto custa
+          <div style={{
+            display: 'flex', alignItems: 'center', marginTop: '3px',
+            border: `1px solid ${T.rule}`, background: '#fff', borderRadius: '9px', overflow: 'hidden',
+            width: '132px',
+          }}>
+            <span aria-hidden="true" style={{
+              flex: 'none', paddingLeft: '9px',
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px', color: C.soft,
+            }}>
+              R$
+            </span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={alvo}
+              onChange={(e) => setAlvo(e.target.value)}
+              placeholder="0,00"
+              style={{
+                flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
+                padding: '9px 9px 9px 5px', fontFamily: "'IBM Plex Mono', monospace",
+                fontVariantNumeric: 'tabular-nums', fontSize: '13px', color: C.ink,
+                textAlign: 'right', outline: 'none',
+              }}
+            />
+          </div>
+        </label>
+
+        <label style={{ fontSize: '11px', color: C.soft, flex: '1 1 auto', minWidth: '140px' }}>
+          Para quando
+          <select
+            value={prazo}
+            onChange={(e) => setPrazo(Number(e.target.value))}
+            style={{
+              display: 'block', marginTop: '3px', width: '100%',
+              border: `1px solid ${T.rule}`, borderRadius: '9px', padding: '9px 8px',
+              fontFamily: 'Inter, sans-serif', fontSize: '13px', color: C.ink, background: '#fff',
+            }}
+          >
+            {Array.from({ length: 60 }, (_, i) => absAtual + i).map((abs) => (
+              <option key={abs} value={abs}>{MESES[mesDe(abs)]} {anoDe(abs)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button type="submit" disabled={!nome.trim() || num(alvo) <= 0} style={{
+          flex: 1, border: 0, borderRadius: '9px', padding: '11px',
+          background: nome.trim() && num(alvo) > 0 ? T.forte : T.rule,
+          color: nome.trim() && num(alvo) > 0 ? '#fff' : C.soft,
+          fontSize: '14px', fontWeight: 600,
+          cursor: nome.trim() && num(alvo) > 0 ? 'pointer' : 'not-allowed',
+        }}>
+          Criar meta
+        </button>
+        <button type="button" onClick={() => setAberto(false)} style={{
+          border: `1px solid ${T.rule}`, background: 'transparent', color: C.soft,
+          borderRadius: '9px', padding: '11px 16px', fontSize: '14px', cursor: 'pointer',
+        }}>
+          Cancelar
+        </button>
+      </div>
+    </form>
   );
 }
