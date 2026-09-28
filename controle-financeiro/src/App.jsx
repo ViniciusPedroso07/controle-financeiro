@@ -104,5 +104,12 @@ export default function App() {
     );
   }
 
-  return <ControleDiario familyId={familyId} supabase={supabase} onSair={sair} />;
+  return (
+    <ControleDiario
+      familyId={familyId}
+      supabase={supabase}
+      onSair={sair}
+      onTrocarFamilia={(novoId) => setFamilyId(novoId)}
+    />
+  );
 }
