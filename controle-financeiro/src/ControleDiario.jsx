@@ -379,35 +379,38 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
         const fix = (d.fixos || []).reduce((acc, x) => (Number(x.dia) === dia ? acc + num(valorNoMes(x, abs)) : acc), 0);
         const par = ativasNoMes.reduce((acc, x) => (Number(x.dia) === dia ? acc + num(x.valor) : acc), 0);
 
+        // Agrupa por categoria (a "tag"). Quando o item não tem categoria,
+        // cai em "Sem categoria" — assim fica visível o que falta etiquetar,
+        // em vez de cada conta virar uma linha própria no ranking.
+        const registrar = (categoria, nome, valor, ref) => {
+          if (valor <= 0) return;
+          const c = (categoria && categoria.trim()) || 'Sem categoria';
+          if (!cats[c]) cats[c] = { total: 0, itens: [] };
+          cats[c].total += valor;
+          cats[c].itens.push({ nome, valor, ...ref });
+        };
+
         let varPlanejada = 0;
         (d.contasVariaveis || []).forEach((x) => {
           if (Number(x.dia) === dia) {
             const val = num(valorNoMes(x, abs));
             varPlanejada += val;
-            if (val > 0) {
-              const c = (x.categoria && x.categoria.trim()) || (x.nome && x.nome.trim()) || 'Sem categoria';
-              cats[c] = (cats[c] || 0) + val;
-            }
+            registrar(x.categoria, x.nome || 'Conta variável', val,
+              { tipo: 'variavel', id: x.id, rotuloTipo: 'variável' });
           }
         });
 
-        // contas fixas e parcelas também são saída, então entram no ranking
         (d.fixos || []).forEach((x) => {
           if (Number(x.dia) === dia) {
-            const val = num(valorNoMes(x, abs));
-            if (val > 0) {
-              const c = (x.nome && x.nome.trim()) || 'Conta fixa';
-              cats[c] = (cats[c] || 0) + val;
-            }
+            registrar(x.categoria, x.nome || 'Conta fixa', num(valorNoMes(x, abs)),
+              { tipo: 'fixo', id: x.id, rotuloTipo: 'fixa' });
           }
         });
+
         ativasNoMes.forEach((x) => {
           if (Number(x.dia) === dia) {
-            const val = num(x.valor);
-            if (val > 0) {
-              const c = (x.nome && x.nome.trim()) || 'Parcela';
-              cats[c] = (cats[c] || 0) + val;
-            }
+            registrar(x.categoria, x.nome || 'Parcela', num(x.valor),
+              { tipo: 'parcela', id: x.id, rotuloTipo: 'parcela' });
           }
         });
 
@@ -415,10 +418,9 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
         saldos[k] = saldo;
 
         lancs.forEach((l) => {
-          const v = num(l.valor);
-          if (v <= 0 || l.tipo === 'entrada') return;
-          const c = (l.categoria && l.categoria.trim()) || 'Sem categoria';
-          cats[c] = (cats[c] || 0) + v;
+          if (l.tipo === 'entrada') return;
+          registrar(l.categoria, `Avulso · dia ${dia}`, num(l.valor),
+            { tipo: 'lancamento', id: l.id, chave: k, rotuloTipo: 'avulso' });
         });
 
         gastoPorDia[dia] = varPlanejada + avulso;
@@ -504,14 +506,16 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
     const absHoje = absMes(hoje.getFullYear(), hoje.getMonth());
     return (d.metas || []).map((m) => {
       const alvo = num(m.alvo);
-      const guardado = (m.aportes || []).reduce((soma, a) => soma + num(a.valor), 0);
+      const guardado = (m.aportes || []).reduce(
+        (soma, a) => soma + (a.tipo === 'retirada' ? -num(a.valor) : num(a.valor)), 0
+      );
       const falta = Math.max(0, alvo - guardado);
       const prazo = Number(m.prazo ?? absHoje);
       const mesesRestantes = Math.max(0, prazo - absHoje + 1);
       const concluida = alvo > 0 && guardado >= alvo;
       const vencida = !concluida && mesesRestantes === 0;
       const porMes = concluida ? 0 : mesesRestantes > 0 ? falta / mesesRestantes : falta;
-      const progresso = alvo > 0 ? Math.min(1, guardado / alvo) : 0;
+      const progresso = alvo > 0 ? Math.max(0, Math.min(1, guardado / alvo)) : 0;
       return { ...m, alvo, guardado, falta, prazo, mesesRestantes, concluida, vencida, porMes, progresso };
     });
   }, [d.metas]);
@@ -533,18 +537,23 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
   const delMeta = (id) =>
     setD((p) => ({ ...p, metas: (p.metas || []).filter((m) => m.id !== id) }));
 
-  const addAporte = (idMeta, valor) =>
+  const addAporte = (idMeta, valor, tipo = 'deposito', absEscolhido = null) => {
+    const absAtual = absMes(hoje.getFullYear(), hoje.getMonth());
+    const abs = absEscolhido ?? absAtual;
     setD((p) => ({
       ...p,
       metas: (p.metas || []).map((m) => (m.id === idMeta
         ? { ...m, aportes: [...(m.aportes || []), {
             id: `ap${Date.now()}`,
             valor,
-            abs: absMes(hoje.getFullYear(), hoje.getMonth()),
-            dia: hoje.getDate(),
+            tipo,
+            abs,
+            // o dia só faz sentido quando o lançamento é do mês corrente
+            dia: abs === absAtual ? hoje.getDate() : null,
           }] }
         : m)),
     }));
+  };
 
   const delAporte = (idMeta, idAporte) =>
     setD((p) => ({
@@ -562,7 +571,9 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
 
   const categoriasUsadas = useMemo(() => {
     const usadas = new Set();
-    (d.contasVariaveis || []).forEach((v) => { if (v.categoria && v.categoria.trim()) usadas.add(v.categoria.trim()); });
+    ['contasVariaveis', 'fixos', 'parcelas'].forEach((chave) => {
+      (d[chave] || []).forEach((v) => { if (v.categoria && v.categoria.trim()) usadas.add(v.categoria.trim()); });
+    });
     Object.values(d.dias || {}).forEach((reg) => {
       (reg?.lancamentos || []).forEach((l) => { if (l.categoria && l.categoria.trim()) usadas.add(l.categoria.trim()); });
     });
@@ -624,7 +635,7 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
       ...p,
       [lista]: [...p[lista], {
         id: `${lista}${Date.now()}`, nome: "", dia: 10, valor: "",
-        ...(lista === 'contasVariaveis' ? { categoria: "" } : {}),
+        ...(lista === 'contasVariaveis' || lista === 'fixos' || lista === 'parcelas' ? { categoria: "" } : {}),
         ...(lista === 'parcelas' ? { quantidade: 12, mesInicio: absVisto } : {}),
       }],
     }));
@@ -646,9 +657,34 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
     setMes(hoje.getMonth());
   };
 
-  const catsOrdenadas = Object.entries(r.cats).sort((a, b) => b[1] - a[1]);
+  const catsOrdenadas = Object.entries(r.cats)
+    .map(([nome, dados]) => [nome, dados.total, dados.itens])
+    .sort((a, b) => b[1] - a[1]);
   const maxCat = catsOrdenadas.length ? catsOrdenadas[0][1] : 1;
-  const totalCats = catsOrdenadas.reduce((s, [, v]) => s + v, 0);
+  const totalCats = catsOrdenadas.reduce((soma, [, v]) => soma + v, 0);
+
+  // Troca a categoria de um item direto pelo ranking, sem precisar caçar
+  // onde ele foi cadastrado.
+  const trocarCategoria = (item, novaCategoria) => {
+    if (item.tipo === 'lancamento') {
+      setD((p) => ({
+        ...p,
+        dias: {
+          ...p.dias,
+          [item.chave]: {
+            lancamentos: (p.dias[item.chave]?.lancamentos || []).map((l) =>
+              (l.id === item.id ? { ...l, categoria: novaCategoria } : l)),
+          },
+        },
+      }));
+      return;
+    }
+    const lista = item.tipo === 'fixo' ? 'fixos' : item.tipo === 'parcela' ? 'parcelas' : 'contasVariaveis';
+    setD((p) => ({
+      ...p,
+      [lista]: (p[lista] || []).map((x) => (x.id === item.id ? { ...x, categoria: novaCategoria } : x)),
+    }));
+  };
   const maxMes = Math.max(1, ...Array.from({ length: totalDias }, (_, i) => Math.abs(calc.saldos[chaveDia(anoVisto, mes, i + 1)] || 0)));
 
   const faixa = (v) => {
@@ -1398,37 +1434,20 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
                       <Pizza dados={catsOrdenadas} total={totalCats} mostrarValores={mostrarValores} />
 
                       <div style={{ flex: '1 1 auto', minWidth: 0, width: '100%' }}>
-                        {catsOrdenadas.map(([c, v], idx) => (
-                          <div key={c} style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            gap: '10px', padding: '7px 0',
-                            borderBottom: idx === catsOrdenadas.length - 1 ? 0 : '1px solid #E4E8E0',
-                          }}>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '9px', minWidth: 0 }}>
-                              <span aria-hidden="true" style={{
-                                width: '11px', height: '11px', borderRadius: '3px', flex: 'none',
-                                background: PASTEL[idx % PASTEL.length],
-                              }} />
-                              <span style={{
-                                fontSize: '13px', color: C.ink,
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                              }}>
-                                {c}
-                              </span>
-                            </span>
-                            <span style={{ textAlign: 'right', flex: 'none' }}>
-                              <span style={{
-                                display: 'block',
-                                fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                                fontSize: '13px', fontWeight: 600, color: C.ink,
-                              }}>
-                                {V(v)}
-                              </span>
-                              <span style={{ display: 'block', fontSize: '10.5px', color: C.soft }}>
-                                {totalCats > 0 ? Math.round((v / totalCats) * 100) : 0}%
-                              </span>
-                            </span>
-                          </div>
+                        {catsOrdenadas.map(([c, v, itens], idx) => (
+                          <LinhaCategoria
+                            key={c}
+                            categoria={c}
+                            valor={v}
+                            itens={itens || []}
+                            cor={PASTEL[idx % PASTEL.length]}
+                            percentual={totalCats > 0 ? Math.round((v / totalCats) * 100) : 0}
+                            formatar={V}
+                            tema={T}
+                            categorias={categoriasUsadas}
+                            onTrocarCategoria={trocarCategoria}
+                            ultima={idx === catsOrdenadas.length - 1}
+                          />
                         ))}
                       </div>
                     </div>
@@ -1628,6 +1647,9 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
                     itens={d.fixos}
                     exemploNome="ex: Aluguel"
                     formatar={V}
+                    comCategoria
+                    categorias={categoriasUsadas}
+                    onCategoria={(id, v) => setPadrao('fixos', id, 'categoria', v)}
                     mes={absVisto}
                     onNome={(id, v) => setPadrao('fixos', id, 'nome', v)}
                     onDia={(id, v) => setPadrao('fixos', id, 'dia', v)}
@@ -1674,6 +1696,9 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
                     exemploNome="ex: Geladeira"
                     formatar={V}
                     comParcelas
+                    comCategoria
+                    categorias={categoriasUsadas}
+                    onCategoria={(id, v) => setPadrao('parcelas', id, 'categoria', v)}
                     mes={absVisto}
                     ano={anoVisto}
                     onNome={(id, v) => setPadrao('parcelas', id, 'nome', v)}
@@ -1694,62 +1719,6 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
         {/* ═══════════ ABA: METAS ═══════════ */}
         {aba === 'metas' && (
           <>
-            {metasCalculadas.length > 0 && (
-              <div style={{
-                border: `1px solid ${T.pale}`, background: T.baseBg,
-                borderRadius: '12px', padding: '15px 17px', marginBottom: '18px',
-              }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: C.ink, marginBottom: '12px' }}>
-                  Dá para guardar tudo?
-                </div>
-
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                  gap: '10px', padding: '6px 0',
-                }}>
-                  <span style={{ fontSize: '12.5px', color: C.soft }}>Suas metas precisam de</span>
-                  <span style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                    fontSize: '14px', fontWeight: 600, color: C.ink,
-                  }}>
-                    {V(totalPorMesDasMetas)}
-                  </span>
-                </div>
-
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                  gap: '10px', padding: '6px 0',
-                }}>
-                  <span style={{ fontSize: '12.5px', color: C.soft }}>
-                    Sobra em {MESES[mes].toLowerCase()}
-                  </span>
-                  <span style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                    fontSize: '14px', fontWeight: 600, color: r.sobra < 0 ? C.rose : C.ink,
-                  }}>
-                    {V(r.sobra)}
-                  </span>
-                </div>
-
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                  gap: '10px', paddingTop: '10px', marginTop: '4px',
-                  borderTop: `1px solid ${T.pale}`,
-                }}>
-                  <span style={{ fontSize: '12.5px', fontWeight: 600, color: C.ink }}>
-                    {r.sobra - totalPorMesDasMetas >= 0 ? 'Ainda sobraria' : 'Precisaria de mais'}
-                  </span>
-                  <span style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                    fontSize: '16px', fontWeight: 600,
-                    color: r.sobra - totalPorMesDasMetas >= 0 ? T.forte : C.rose,
-                  }}>
-                    {V(Math.abs(r.sobra - totalPorMesDasMetas))}
-                  </span>
-                </div>
-              </div>
-            )}
-
             {metasCalculadas.length === 0 ? (
               <div style={{
                 border: `1px dashed ${T.rule}`, borderRadius: '14px',
@@ -1772,7 +1741,8 @@ export default function ControleDiario({ familyId, supabase, onSair, onTrocarFam
                     formatar={V}
                     tema={T}
                     sobra={r.sobra}
-                    onAporte={(valor) => addAporte(m.id, valor)}
+                    onAporte={(valor, tipo, abs) => addAporte(m.id, valor, tipo, abs)}
+                    absAtual={absMes(hoje.getFullYear(), hoje.getMonth())}
                     onDelAporte={(idAporte) => delAporte(m.id, idAporte)}
                     onCampo={(campo, valor) => setMeta(m.id, campo, valor)}
                     onExcluir={() => delMeta(m.id)}
@@ -2379,7 +2349,11 @@ function Lancamentos({ lancs, onCampo, onDel, onAdd, tema }) {
               onChange={(e) => onCampo(l.id, 'categoria', e.target.value)}
               style={{
                 flex: '1 1 auto', minWidth: 0,
-                border: `1px solid ${C.rule}`, background: '#fff', borderRadius: '7px',
+                // sem categoria, a borda fica tracejada para avisar que falta
+                border: (l.categoria || '').trim()
+                  ? `1px solid ${C.rule}`
+                  : `1px dashed ${num(l.valor) > 0 ? C.amber : C.rule}`,
+                background: '#fff', borderRadius: '7px',
                 padding: '7px 8px', fontFamily: 'Inter, sans-serif', fontSize: '12.5px', color: C.ink,
               }}
             />
@@ -3120,9 +3094,10 @@ function ExplicacaoLimite({
 
 // Cartão de uma meta: progresso, quanto falta, e o número que decide tudo —
 // quanto precisa entrar por mês para chegar no prazo.
-function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCampo, onExcluir }) {
+function CartaoMeta({ meta, formatar, tema, sobra, absAtual, onAporte, onDelAporte, onCampo, onExcluir }) {
   const T = tema || { forte: C.deep, rule: C.rule, card: C.card, pale: C.pale };
   const [aporte, setAporte] = useState('');
+  const [mesAporte, setMesAporte] = useState(absAtual);
   const [aberto, setAberto] = useState(false);
   const [editando, setEditando] = useState(false);
 
@@ -3137,8 +3112,12 @@ function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCamp
         ? { texto: 'Cabe na sobra', cor: T.forte, fundo: T.pale }
         : { texto: 'Aperta o mês', cor: C.amber, fundo: '#F3E6CC' };
 
-  const confirmarAporte = () => {
-    if (num(aporte) > 0) { onAporte(aporte); setAporte(''); }
+  const confirmarAporte = (tipo = 'deposito') => {
+    if (num(aporte) > 0) {
+      onAporte(aporte, tipo, mesAporte);
+      setAporte('');
+      setMesAporte(absAtual);
+    }
   };
 
   return (
@@ -3243,47 +3222,93 @@ function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCamp
         />
       )}
 
-      {/* guardar agora */}
-      <div style={{ display: 'flex', gap: '8px', marginTop: '13px' }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', flex: '1 1 auto', minWidth: 0,
-          border: `1px solid ${T.rule}`, background: '#fff', borderRadius: '9px', overflow: 'hidden',
-        }}>
-          <span aria-hidden="true" style={{
-            flex: 'none', paddingLeft: '10px',
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px', color: C.soft,
+      {/* movimentar a caixinha */}
+      <div style={{ marginTop: '14px', display: 'grid', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', flex: '1 1 auto', minWidth: 0,
+            border: `1px solid ${T.rule}`, background: '#fff', borderRadius: '9px', overflow: 'hidden',
           }}>
-            R$
-          </span>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="guardar agora"
-            aria-label="Valor a guardar"
-            value={aporte}
-            onChange={(e) => setAporte(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') confirmarAporte(); }}
+            <span aria-hidden="true" style={{
+              flex: 'none', paddingLeft: '10px',
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px', color: C.soft,
+            }}>
+              R$
+            </span>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="0,00"
+              aria-label="Valor"
+              value={aporte}
+              onChange={(e) => setAporte(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') confirmarAporte('deposito'); }}
+              style={{
+                flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
+                padding: '9px 10px 9px 6px', fontFamily: "'IBM Plex Mono', monospace",
+                fontVariantNumeric: 'tabular-nums', fontSize: '13.5px', color: C.ink,
+                textAlign: 'right', outline: 'none',
+              }}
+            />
+          </div>
+
+          <select
+            value={mesAporte}
+            onChange={(e) => setMesAporte(Number(e.target.value))}
+            aria-label="Mês do lançamento"
             style={{
-              flex: '1 1 auto', minWidth: 0, border: 0, background: 'transparent',
-              padding: '9px 10px 9px 6px', fontFamily: "'IBM Plex Mono', monospace",
-              fontVariantNumeric: 'tabular-nums', fontSize: '13.5px', color: C.ink,
-              textAlign: 'right', outline: 'none',
+              flex: '0 1 145px', minWidth: 0,
+              border: `1px solid ${mesAporte !== absAtual ? C.amber : T.rule}`,
+              background: mesAporte !== absAtual ? '#FBF3E3' : '#fff',
+              borderRadius: '9px', padding: '9px 8px',
+              fontFamily: 'Inter, sans-serif', fontSize: '12.5px', color: C.ink,
             }}
-          />
+          >
+            {Array.from({ length: 30 }, (_, i) => absAtual - 24 + i).map((abs) => (
+              <option key={abs} value={abs}>
+                {abs === absAtual ? 'Este mês' : `${MESES[mesDe(abs)]} ${anoDe(abs)}`}
+              </option>
+            ))}
+          </select>
         </div>
-        <button
-          onClick={confirmarAporte}
-          disabled={num(aporte) <= 0}
-          style={{
-            flex: 'none', border: 0, borderRadius: '9px', padding: '9px 16px',
-            background: num(aporte) > 0 ? T.forte : T.rule,
-            color: num(aporte) > 0 ? '#fff' : C.soft,
-            fontSize: '13.5px', fontWeight: 600,
-            cursor: num(aporte) > 0 ? 'pointer' : 'not-allowed',
-          }}
-        >
-          Guardar
-        </button>
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => confirmarAporte('deposito')}
+            disabled={num(aporte) <= 0}
+            style={{
+              flex: 1, border: 0, borderRadius: '9px', padding: '10px',
+              background: num(aporte) > 0 ? T.forte : T.rule,
+              color: num(aporte) > 0 ? '#fff' : C.soft,
+              fontSize: '13.5px', fontWeight: 600,
+              cursor: num(aporte) > 0 ? 'pointer' : 'not-allowed',
+            }}
+          >
+            Guardar
+          </button>
+
+          <button
+            onClick={() => confirmarAporte('retirada')}
+            disabled={num(aporte) <= 0 || guardado <= 0}
+            title={guardado <= 0 ? 'Não há nada guardado para retirar' : 'Retirar desta meta'}
+            style={{
+              flex: 1, borderRadius: '9px', padding: '10px',
+              border: `1px solid ${num(aporte) > 0 && guardado > 0 ? C.rosePale : T.rule}`,
+              background: 'transparent',
+              color: num(aporte) > 0 && guardado > 0 ? C.rose : C.soft,
+              fontSize: '13.5px', fontWeight: 600,
+              cursor: num(aporte) > 0 && guardado > 0 ? 'pointer' : 'not-allowed',
+            }}
+          >
+            Retirar
+          </button>
+        </div>
+
+        {mesAporte !== absAtual && (
+          <div style={{ fontSize: '11px', color: C.amber, lineHeight: 1.45 }}>
+            Vai ser lançado em {MESES[mesDe(mesAporte)].toLowerCase()} de {anoDe(mesAporte)}, não neste mês.
+          </div>
+        )}
       </div>
 
       {/* histórico e ajustes */}
@@ -3326,7 +3351,7 @@ function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCamp
               )
                 .sort((x, y) => Number(x[0]) - Number(y[0]))
                 .map(([absMesTexto, lista]) => {
-                  const totalDoMes = lista.reduce((soma, a) => soma + num(a.valor), 0);
+                  const totalDoMes = lista.reduce((soma, a) => soma + (a.tipo === 'retirada' ? -num(a.valor) : num(a.valor)), 0);
                   return (
                     <div key={absMesTexto} style={{
                       padding: '7px 0', borderBottom: '1px solid rgba(18,33,28,.06)',
@@ -3336,12 +3361,18 @@ function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCamp
                       }}>
                         <span style={{ fontSize: '12.5px', color: C.ink, fontWeight: 500 }}>
                           {rotuloAbs(Number(absMesTexto))}
+                          {lista.length === 1 && lista[0].tipo === 'retirada' && (
+                            <span style={{ color: C.rose, fontWeight: 400, marginLeft: '6px', fontSize: '11px' }}>
+                              retirada
+                            </span>
+                          )}
                         </span>
                         <span style={{
                           fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                          fontSize: '13px', fontWeight: 600, color: T.forte,
+                          fontSize: '13px', fontWeight: 600,
+                          color: totalDoMes < 0 ? C.rose : T.forte,
                         }}>
-                          {formatar(totalDoMes)}
+                          {totalDoMes < 0 ? '−' : '+'}{formatar(Math.abs(totalDoMes))}
                         </span>
                       </div>
 
@@ -3353,14 +3384,17 @@ function CartaoMeta({ meta, formatar, tema, sobra, onAporte, onDelAporte, onCamp
                               gap: '8px', padding: '2px 0',
                             }}>
                               <span style={{ fontSize: '11px', color: C.soft }}>
-                                dia {String(a.dia || 1).padStart(2, '0')}
+                                {a.dia ? `dia ${String(a.dia).padStart(2, '0')}` : 'no mês'}
+                                {a.tipo === 'retirada' && (
+                                  <span style={{ color: C.rose, marginLeft: '5px' }}>retirada</span>
+                                )}
                               </span>
                               <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
                                 <span style={{
                                   fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
-                                  fontSize: '11.5px', color: C.soft,
+                                  fontSize: '11.5px', color: a.tipo === 'retirada' ? C.rose : C.soft,
                                 }}>
-                                  {formatar(num(a.valor))}
+                                  {a.tipo === 'retirada' ? '−' : '+'}{formatar(num(a.valor))}
                                 </span>
                                 <button onClick={() => onDelAporte(a.id)} aria-label="Remover depósito" style={{
                                   border: 0, background: 'transparent', color: C.soft,
@@ -3574,7 +3608,7 @@ function GraficoMeta({ aportes, alvo, prazo, formatar, tema, concluida, vencida 
   const porMes = {};
   aportes.forEach((a) => {
     const k = Number(a.abs);
-    porMes[k] = (porMes[k] || 0) + num(a.valor);
+    porMes[k] = (porMes[k] || 0) + (a.tipo === 'retirada' ? -num(a.valor) : num(a.valor));
   });
 
   const pontos = [];
@@ -3584,11 +3618,11 @@ function GraficoMeta({ aportes, alvo, prazo, formatar, tema, concluida, vencida 
     if (abs <= absAtual) pontos.push({ abs, valor: acumulado });
   }
 
-  const L = 8, R = 8, TOPO = 10, BASE = 20;
-  const Larg = 300, Alt = 108;
-  const teto = Math.max(alvo, acumulado) * 1.05;
+  const L = 6, R = 6, TOPO = 12, BASE = 14;
+  const Larg = 340, Alt = 74;
+  const teto = Math.max(alvo, acumulado, 1) * 1.08;
   const x = (abs) => L + ((abs - inicio) / (fim - inicio)) * (Larg - L - R);
-  const y = (v) => TOPO + (1 - v / teto) * (Alt - TOPO - BASE);
+  const y = (v) => TOPO + (1 - Math.max(0, v) / teto) * (Alt - TOPO - BASE);
 
   const caminhoReal = pontos.map((p, i) => `${i ? 'L' : 'M'}${x(p.abs).toFixed(1)},${y(p.valor).toFixed(1)}`).join(' ');
   const areaReal = pontos.length > 1
@@ -3601,7 +3635,14 @@ function GraficoMeta({ aportes, alvo, prazo, formatar, tema, concluida, vencida 
 
   return (
     <div style={{ marginTop: '14px' }}>
-      <svg viewBox={`0 0 ${Larg} ${Alt}`} width="100%" role="img" aria-label="Progresso da meta ao longo dos meses">
+      <svg
+        viewBox={`0 0 ${Larg} ${Alt}`}
+        width="100%"
+        style={{ display: 'block', maxHeight: '86px' }}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="Progresso da meta ao longo dos meses"
+      >
         <defs>
           <linearGradient id={`grad-${prazo}-${alvo}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={T.medio} stopOpacity="0.26" />
@@ -3611,7 +3652,7 @@ function GraficoMeta({ aportes, alvo, prazo, formatar, tema, concluida, vencida 
 
         {/* alvo */}
         <line x1={L} y1={y(alvo)} x2={Larg - R} y2={y(alvo)} stroke={T.forte} strokeWidth="1" strokeDasharray="3 3" opacity="0.45" />
-        <text x={L} y={y(alvo) - 4} fontSize="8.5" fontFamily="'IBM Plex Mono', monospace" fill={T.forte} opacity="0.8">
+        <text x={L} y={y(alvo) - 3.5} fontSize="7.5" fontFamily="'IBM Plex Mono', monospace" fill={T.forte} opacity="0.75">
           meta {formatar(alvo)}
         </text>
 
@@ -3624,19 +3665,19 @@ function GraficoMeta({ aportes, alvo, prazo, formatar, tema, concluida, vencida 
         {/* acumulado real */}
         {areaReal && <path d={areaReal} fill={`url(#grad-${prazo}-${alvo})`} />}
         {pontos.length > 1 && (
-          <path d={caminhoReal} fill="none" stroke={vencida ? C.rose : T.forte} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
+          <path d={caminhoReal} fill="none" stroke={vencida ? C.rose : T.forte} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
         )}
         {ultimo && (
-          <circle cx={x(ultimo.abs)} cy={y(ultimo.valor)} r="3.4" fill={vencida ? C.rose : T.forte} stroke="#fff" strokeWidth="1.5" />
+          <circle cx={x(ultimo.abs)} cy={y(ultimo.valor)} r="2.8" fill={vencida ? C.rose : T.forte} stroke="#fff" strokeWidth="1.3" />
         )}
 
         {/* ponto final do alvo */}
-        <circle cx={x(fim)} cy={y(alvo)} r="3" fill="#fff" stroke={T.forte} strokeWidth="1.6" />
+        <circle cx={x(fim)} cy={y(alvo)} r="2.6" fill="#fff" stroke={T.forte} strokeWidth="1.4" />
 
-        <text x={L} y={Alt - 6} fontSize="8.5" fontFamily="'IBM Plex Mono', monospace" fill={C.soft}>
+        <text x={L} y={Alt - 3} fontSize="7.5" fontFamily="'IBM Plex Mono', monospace" fill={C.soft}>
           {ABREV[mesDe(inicio)]}/{String(anoDe(inicio)).slice(2)}
         </text>
-        <text x={Larg - R} y={Alt - 6} textAnchor="end" fontSize="8.5" fontFamily="'IBM Plex Mono', monospace" fill={C.soft}>
+        <text x={Larg - R} y={Alt - 3} textAnchor="end" fontSize="7.5" fontFamily="'IBM Plex Mono', monospace" fill={C.soft}>
           {ABREV[mesDe(fim)]}/{String(anoDe(fim)).slice(2)}
         </text>
       </svg>
@@ -3646,6 +3687,140 @@ function GraficoMeta({ aportes, alvo, prazo, formatar, tema, concluida, vencida 
           {adiantado
             ? <>No ritmo: o esperado para agora era {formatar(idealAgora)}.</>
             : <>Atrás do ritmo: o esperado para agora era {formatar(idealAgora)}.</>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Linha do ranking: mostra a categoria com o total e, ao tocar, abre os itens
+// que a compõem — cada um com a tag editável ali mesmo.
+function LinhaCategoria({ categoria, valor, itens, cor, percentual, formatar, tema, categorias, onTrocarCategoria, ultima }) {
+  const T = tema || { forte: C.deep, rule: C.rule, card: C.card };
+  const [aberta, setAberta] = useState(false);
+
+  const rotuloCor = (tipo) => (
+    tipo === 'fixa' ? { bg: '#E6E9E2', fg: C.soft }
+    : tipo === 'parcela' ? { bg: '#F0E3DA', fg: C.clay }
+    : tipo === 'variável' ? { bg: '#F3E6CC', fg: C.amber }
+    : { bg: C.rosePale, fg: C.rose }
+  );
+
+  return (
+    <div style={{ borderBottom: ultima && !aberta ? 0 : '1px solid #E4E8E0' }}>
+      <button
+        onClick={() => setAberta(!aberta)}
+        style={{
+          width: '100%', border: 0, background: 'transparent', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: '10px', padding: '9px 0', textAlign: 'left',
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: '9px', minWidth: 0 }}>
+          <span aria-hidden="true" style={{
+            width: '11px', height: '11px', borderRadius: '3px', flex: 'none', background: cor,
+          }} />
+          <span style={{ minWidth: 0 }}>
+            <span style={{
+              display: 'block', fontSize: '13px', color: C.ink,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {categoria}
+            </span>
+            <span style={{ display: 'block', fontSize: '10.5px', color: C.soft, marginTop: '1px' }}>
+              {itens.length} {itens.length === 1 ? 'lançamento' : 'lançamentos'}
+            </span>
+          </span>
+        </span>
+
+        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 'none' }}>
+          <span style={{ textAlign: 'right' }}>
+            <span style={{
+              display: 'block',
+              fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+              fontSize: '13px', fontWeight: 600, color: C.ink,
+            }}>
+              {formatar(valor)}
+            </span>
+            <span style={{ display: 'block', fontSize: '10.5px', color: C.soft }}>
+              {percentual}%
+            </span>
+          </span>
+          <span aria-hidden="true" style={{
+            fontSize: '9px', color: C.soft,
+            transform: aberta ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform .2s ease', display: 'inline-block',
+          }}>
+            ▼
+          </span>
+        </span>
+      </button>
+
+      {aberta && (
+        <div style={{
+          background: 'rgba(18,33,28,.025)', borderRadius: '10px',
+          padding: '10px 12px', marginBottom: '10px',
+        }}>
+          <div style={{ fontSize: '10.5px', color: C.soft, marginBottom: '8px' }}>
+            Toque na tag para mudar a categoria do lançamento.
+          </div>
+
+          {itens.map((item, i) => {
+            const c = rotuloCor(item.rotuloTipo);
+            return (
+              <div key={`${item.tipo}-${item.id}-${i}`} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: '10px', padding: '7px 0',
+                borderBottom: i === itens.length - 1 ? 0 : '1px solid rgba(18,33,28,.06)',
+              }}>
+                <span style={{ minWidth: 0, flex: '1 1 auto' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{
+                      fontSize: '12.5px', color: C.ink,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {item.nome}
+                    </span>
+                    <span style={{
+                      flex: 'none', background: c.bg, color: c.fg, borderRadius: '5px',
+                      padding: '2px 6px', fontSize: '9.5px', fontWeight: 600,
+                      fontFamily: "'IBM Plex Mono', monospace", textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                    }}>
+                      {item.rotuloTipo}
+                    </span>
+                  </span>
+
+                  <input
+                    type="text"
+                    list="cd-categorias"
+                    defaultValue={categoria === 'Sem categoria' ? '' : categoria}
+                    placeholder="dar uma categoria"
+                    onBlur={(e) => {
+                      const novo = e.target.value.trim();
+                      const atual = categoria === 'Sem categoria' ? '' : categoria;
+                      if (novo !== atual) onTrocarCategoria(item, novo);
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                    style={{
+                      display: 'block', marginTop: '5px', width: '100%', maxWidth: '190px',
+                      border: `1px solid ${T.rule}`, background: '#fff', borderRadius: '7px',
+                      padding: '6px 8px', fontFamily: 'Inter, sans-serif',
+                      fontSize: '11.5px', color: C.ink,
+                    }}
+                  />
+                </span>
+
+                <span style={{
+                  flex: 'none', alignSelf: 'flex-start', marginTop: '1px',
+                  fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums',
+                  fontSize: '12.5px', fontWeight: 600, color: C.ink,
+                }}>
+                  {formatar(item.valor)}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
